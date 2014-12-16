@@ -886,6 +886,14 @@ module Chewy
       _response['timed_out']
     end
 
+    def index_name(name)
+      chain do
+        @_indexes.each do |index|
+          index.index_name name
+        end
+      end
+    end
+
   protected
 
     def initialize_clone other
@@ -924,6 +932,8 @@ module Chewy
         attributes.reverse_merge!(id: hit['_id'])
           .merge!(_score: hit['_score'])
           .merge!(_explanation: hit['_explanation'])
+
+        attributes[:timestamp] = attributes.delete '@timestamp' rescue nil
 
         wrapper = _derive_index(hit['_index']).type_hash[hit['_type']].new attributes
         wrapper._data = hit
