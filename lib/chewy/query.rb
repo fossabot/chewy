@@ -36,6 +36,7 @@ module Chewy
       @_types = indexes_or_types_and_options.select { |klass| klass < Chewy::Type }
       @_indexes = indexes_or_types_and_options.select { |klass| klass < Chewy::Index }
       @_indexes |= @_types.map(&:index)
+      @custom_index = nil
       @criteria = Criteria.new
     end
 
@@ -887,11 +888,7 @@ module Chewy
     end
 
     def index_name(name)
-      chain do
-        @_indexes.each do |index|
-          index.index_name name
-        end
-      end
+      chain { @custom_index = name }
     end
 
   protected
@@ -912,11 +909,11 @@ module Chewy
     end
 
     def _request
-      @_request ||= criteria.request_body.merge(index: _indexes.map(&:index_name), type: _types.map(&:type_name))
+      @_request = criteria.request_body.merge(index: (@custom_index || _indexes.map(&:index_name)), type: _types.map(&:type_name))
     end
 
     def _response
-      @_response ||= ActiveSupport::Notifications.instrument 'search_query.chewy', request: _request, index: _indexes.one? ? _indexes.first : _indexes do
+      @_response = ActiveSupport::Notifications.instrument 'search_query.chewy', request: _request, index: @custom_index || (_indexes.one? ? _indexes.first : _indexes) do
         begin
           Chewy.client.search(_request)
         rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
@@ -955,7 +952,11 @@ module Chewy
     end
 
     def _indexes_hash
-      @_indexes_hash ||= _indexes.index_by(&:index_name)
+      @_indexes_hash = if@custom_index
+        { @custom_index => _indexes.first }
+      else
+        _indexes.index_by(&:index_name)
+      end
     end
   end
 end
