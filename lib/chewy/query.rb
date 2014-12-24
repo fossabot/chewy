@@ -891,6 +891,20 @@ module Chewy
       chain { @custom_index = name }
     end
 
+    def iterate_over_batches
+      offset = 0
+      batch_size = @criteria.request_options[:size]
+
+      while true do
+        data = offset(offset).to_a
+        yield data
+
+        offset += batch_size
+
+        break if data.size < batch_size
+      end
+    end
+
   protected
 
     def initialize_clone other
@@ -913,7 +927,7 @@ module Chewy
     end
 
     def _response
-      @_response = ActiveSupport::Notifications.instrument 'search_query.chewy', request: _request, index: @custom_index || (_indexes.one? ? _indexes.first : _indexes) do
+      @_response ||= ActiveSupport::Notifications.instrument 'search_query.chewy', request: _request, index: @custom_index || (_indexes.one? ? _indexes.first : _indexes) do
         begin
           Chewy.client.search(_request)
         rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
