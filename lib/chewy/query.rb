@@ -946,6 +946,8 @@ module Chewy
 
         attributes[:timestamp] = attributes.delete '@timestamp' rescue nil
 
+        hit['_index'] = '_all' if hit['_index'] =~ /^\d{4}\.\d{2}\.\d{2}$/
+
         wrapper = _derive_index(hit['_index']).type_hash[hit['_type']].new attributes
         wrapper._data = hit
         wrapper
