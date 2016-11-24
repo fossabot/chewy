@@ -6,32 +6,26 @@ module Chewy
       attr_reader :parent
       attr_reader :parent_id
 
-      def initialize(name, options = {})
-        @id = options.delete(:id) || options.delete(:_id)
-        @parent = options.delete(:parent) || options.delete(:_parent)
-        @parent_id = options.delete(:parent_id)
-        options.reverse_merge!(value: ->(_){_})
-        super(name, options)
-        options.delete(:type)
+      def initialize(*args)
+        super(*args)
+
+        @id = @options.delete(:id) || options.delete(:_id)
+        @parent = @options.delete(:parent) || options.delete(:_parent)
+        @parent_id = @options.delete(:parent_id)
+        @value ||= ->(val) { val }
         @dynamic_templates = []
+        @options.delete(:type)
       end
 
-      def multi_field?
-        false
-      end
-
-      def object_field?
-        true
-      end
-
-      def root_field?
-        true
+      def compose(*args)
+        super.as_json
       end
 
       def mappings_hash
         mappings = super
+        mappings[name].delete(:type)
 
-        if dynamic_templates.any?
+        if dynamic_templates.present?
           mappings[name][:dynamic_templates] ||= []
           mappings[name][:dynamic_templates].concat dynamic_templates
         end
@@ -40,11 +34,11 @@ module Chewy
         mappings
       end
 
-      def dynamic_template *args
+      def dynamic_template(*args)
         options = args.extract_options!.deep_symbolize_keys
         if args.first
           template_name = :"template_#{dynamic_templates.count.next}"
-          template = {template_name => {mapping: options}}
+          template = { template_name => { mapping: options } }
 
           template[template_name][:match_mapping_type] = args.second.to_s if args.second.present?
 
@@ -62,15 +56,13 @@ module Chewy
       end
 
       def compose_parent(object)
-        if parent_id
-          parent_id.arity == 0 ? object.instance_exec(&parent_id) : parent_id.call(object)
-        end
+        return unless parent_id
+        parent_id.arity.zero? ? object.instance_exec(&parent_id) : parent_id.call(object)
       end
-      
+
       def compose_id(object)
-        if id
-          id.arity == 0 ? object.instance_exec(&id) : id.call(object)
-        end
+        return unless id
+        id.arity.zero? ? object.instance_exec(&id) : id.call(object)
       end
     end
   end

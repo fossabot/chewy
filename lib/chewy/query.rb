@@ -1,5 +1,6 @@
 require 'chewy/query/criteria'
 require 'chewy/query/filters'
+require 'chewy/query/scoping'
 require 'chewy/query/loading'
 require 'chewy/query/pagination'
 
@@ -13,25 +14,16 @@ module Chewy
   #
   class Query
     include Enumerable
+    include Scoping
     include Loading
     include Pagination
-
-    RESULT_MERGER = lambda do |key, old_value, new_value|
-      if old_value.is_a?(Hash) && new_value.is_a?(Hash)
-        old_value.merge(new_value, &RESULT_MERGER)
-      elsif new_value.is_a?(Array) && new_value.count > 1
-        new_value
-      else
-        old_value.is_a?(Array) ? new_value : new_value.first
-      end
-    end
 
     delegate :each, :count, :size, to: :_collection
     alias_method :to_ary, :to_a
 
     attr_reader :_indexes, :_types, :options, :criteria
 
-    def initialize *indexes_or_types_and_options
+    def initialize(*indexes_or_types_and_options)
       @options = indexes_or_types_and_options.extract_options!
       @_types = indexes_or_types_and_options.select { |klass| klass < Chewy::Type }
       @_indexes = indexes_or_types_and_options.select { |klass| klass < Chewy::Index }
@@ -48,12 +40,8 @@ module Chewy
     #   UsersIndex.filter(term: {name: 'Johny'}) == UsersIndex.filter(term: {name: 'Johny'}).to_a # => true
     #   UsersIndex.filter(term: {name: 'Johny'}) == UsersIndex.filter(term: {name: 'Winnie'}) # => false
     #
-    def == other
-      super || if other.is_a?(self.class)
-        other.criteria == criteria
-      else
-        to_a == other
-      end
+    def ==(other)
+      super || other.is_a?(self.class) ? other.criteria == criteria : other == to_a
     end
 
     # Adds <tt>explain</tt> parameter to search request.
@@ -68,8 +56,22 @@ module Chewy
     #
     #   UsersIndex::User.filter(term: {name: 'Johny'}).explain.first._explanation # => {...}
     #
-    def explain value = nil
+    def explain(value = nil)
       chain { criteria.update_request_options explain: (value.nil? ? true : value) }
+    end
+
+    # Adds <tt>script_fields</tt> parameter to search request.
+    #  UsersIndex.script_fields(
+    #    distance: {
+    #      params: {
+    #        lat: 37.569976,
+    #        lon: -122.351591
+    #      },
+    #      script: "doc['coordinates'].distanceInMiles(lat, lon)"
+    #    }
+    #  )
+    def script_fields(value)
+      chain { criteria.update_script_fields(value) }
     end
 
     # Sets query compilation mode for search request.
@@ -138,7 +140,7 @@ module Chewy
     #   Chewy.query_mode = :dis_max
     #   Chewy.query_mode = '50%'
     #
-    def query_mode value
+    def query_mode(value)
       chain { criteria.update_options query_mode: value }
     end
 
@@ -210,7 +212,7 @@ module Chewy
     #   Chewy.filter_mode = :should
     #   Chewy.filter_mode = '50%'
     #
-    def filter_mode value
+    def filter_mode(value)
       chain { criteria.update_options filter_mode: value }
     end
 
@@ -222,7 +224,7 @@ module Chewy
     #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode(:should)
     #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode('50%')
     #
-    def post_filter_mode value
+    def post_filter_mode(value)
       chain { criteria.update_options post_filter_mode: value }
     end
 
@@ -271,7 +273,7 @@ module Chewy
     # Use the timeout because it is important to your SLA, not because you want
     # to abort the execution of long running queries.
     #
-    def timeout value
+    def timeout(value)
       chain { criteria.update_request_options timeout: value }
     end
 
@@ -284,8 +286,8 @@ module Chewy
     #            size: 100
     #          }}
     #
-    def limit value
-      chain { criteria.update_request_options size: Integer(value) }
+    def limit(value = nil, &block)
+      chain { criteria.update_request_options size: block || Integer(value) }
     end
 
     # Sets elasticsearch <tt>from</tt> search request param
@@ -296,15 +298,15 @@ module Chewy
     #            from: 300
     #          }}
     #
-    def offset value
-      chain { criteria.update_request_options from: Integer(value) }
+    def offset(value = nil, &block)
+      chain { criteria.update_request_options from: block || Integer(value) }
     end
 
     # Elasticsearch highlight query option support
     #
     #   UsersIndex.query(...).highlight(fields: { ... })
     #
-    def highlight value
+    def highlight(value)
       chain { criteria.update_request_options highlight: value }
     end
 
@@ -312,7 +314,7 @@ module Chewy
     #
     #   UsersIndex.query(...).rescore(query: { ... })
     #
-    def rescore value
+    def rescore(value)
       chain { criteria.update_request_options rescore: value }
     end
 
@@ -320,8 +322,16 @@ module Chewy
     #
     # UsersIndex.query(...).min_score(0.5)
     #
-    def min_score value
+    def min_score(value)
       chain { criteria.update_request_options min_score: value }
+    end
+
+    # Elasticsearch track_scores option support
+    #
+    # UsersIndex.query(...).track_scores(true)
+    #
+    def track_scores(value)
+      chain { criteria.update_request_options track_scores: value }
     end
 
     # Adds facets section to the search request.
@@ -337,7 +347,8 @@ module Chewy
     # If called parameterless - returns result facets from ES performing request.
     # Returns empty hash if no facets was requested or resulted.
     #
-    def facets params = nil
+    def facets(params = nil)
+      raise RemovedFeature, 'removed in elasticsearch 2.0' if Runtime.version >= '2.0'
       if params
         chain { criteria.update_facets params }
       else
@@ -349,21 +360,21 @@ module Chewy
     # added to the search request and combinded according to
     # <tt>boost_mode</tt> and <tt>score_mode</tt>
     #
-    #   UsersIndex.script_score("doc['boost'].value", filter: { term: {foo: :bar} })
+    #   UsersIndex.script_score("doc['boost'].value", params: { modifier: 2 })
     #       # => {body:
     #              query: {
     #                function_score: {
     #                  query: { ...},
     #                  functions: [{
     #                    script_score: {
-    #                       script: "doc['boost'].value"
-    #                     },
-    #                     filter: { term: { foo: :bar } }
+    #                       script: "doc['boost'].value * modifier",
+    #                       params: { modifier: 2 }
+    #                     }
     #                    }
     #                  }]
     #                } } }
     def script_score(script, options = {})
-      scoring = options.merge(script_score: { script: script })
+      scoring = { script_score: { script: script }.merge(options) }
       chain { criteria.update_scores scoring }
     end
 
@@ -371,7 +382,7 @@ module Chewy
     # added to the search request and combinded according to
     # <tt>boost_mode</tt> and <tt>score_mode</tt>
     #
-    # This probably only makes sense if you specifiy a filter
+    # This probably only makes sense if you specify a filter
     # for the boost factor as well
     #
     #   UsersIndex.boost_factor(23, filter: { term: { foo: :bar} })
@@ -389,11 +400,33 @@ module Chewy
       chain { criteria.update_scores scoring }
     end
 
+    # Add a weight scoring function to the search. All scores are
+    # added to the search request and combinded according to
+    # <tt>boost_mode</tt> and <tt>score_mode</tt>
+    #
+    # This probably only makes sense if you specify a filter
+    # for the weight as well.
+    #
+    #   UsersIndex.weight(23, filter: { term: { foo: :bar} })
+    #       # => {body:
+    #              query: {
+    #                function_score: {
+    #                  query: { ...},
+    #                  functions: [{
+    #                    weight: 23,
+    #                    filter: { term: { foo: :bar } }
+    #                  }]
+    #                } } }
+    def weight(factor, options = {})
+      scoring = options.merge(weight: factor.to_i)
+      chain { criteria.update_scores scoring }
+    end
+
     # Adds a random score to the search request. All scores are
     # added to the search request and combinded according to
     # <tt>boost_mode</tt> and <tt>score_mode</tt>
     #
-    # This probably only makes sense if you specifiy a filter
+    # This probably only makes sense if you specify a filter
     # for the random score as well.
     #
     # If you do not pass in a seed value, Time.now will be used
@@ -478,9 +511,18 @@ module Chewy
     def decay(function, field, options = {})
       field_options = options.extract!(:origin, :scale, :offset, :decay).delete_if { |_, v| v.nil? }
       scoring = options.merge(function => {
-        field => field_options
-      })
+                                field => field_options
+                              })
       chain { criteria.update_scores scoring }
+    end
+
+    # Sets <tt>preference</tt> for request.
+    # For instance, one can use <tt>preference=_primary</tt> to execute only on the primary shards.
+    #
+    #   scope = UsersIndex.preference(:_primary)
+    #
+    def preference(value)
+      chain { criteria.update_search_options preference: value }
     end
 
     # Sets elasticsearch <tt>aggregations</tt> search request param
@@ -495,14 +537,53 @@ module Chewy
     #            }
     #          }}
     #
-    def aggregations params = nil
+    def aggregations(params = nil)
+      @_named_aggs ||= _build_named_aggs
+      @_fully_qualified_named_aggs ||= _build_fqn_aggs
       if params
+        params = { params => @_named_aggs[params] } if params.is_a?(Symbol)
+        params = { params => _get_fully_qualified_named_agg(params) } if params.is_a?(String) && params =~ /\A\S+#\S+\.\S+\z/
         chain { criteria.update_aggregations params }
       else
         _response['aggregations'] || {}
       end
     end
-    alias :aggs :aggregations
+    alias_method :aggs, :aggregations
+
+    # In this simplest of implementations each named aggregation must be uniquely named
+    def _build_named_aggs
+      named_aggs = {}
+      @_indexes.each do |index|
+        index.types.each do |type|
+          type._agg_defs.each do |agg_name, prc|
+            named_aggs[agg_name] = prc.call
+          end
+        end
+      end
+      named_aggs
+    end
+
+    def _build_fqn_aggs
+      named_aggs = {}
+      @_indexes.each do |index|
+        named_aggs[index.to_s.downcase] ||= {}
+        index.types.each do |type|
+          named_aggs[index.to_s.downcase][type.to_s.downcase] ||= {}
+          type._agg_defs.each do |agg_name, prc|
+            named_aggs[index.to_s.downcase][type.to_s.downcase][agg_name.to_s.downcase] = prc.call
+          end
+        end
+      end
+      named_aggs
+    end
+
+    def _get_fully_qualified_named_agg(str)
+      parts = str.scan(/\A(\S+)#(\S+)\.(\S+)\z/).first
+      idx = "#{parts[0]}index"
+      type = "#{idx}::#{parts[1]}"
+      agg_name = parts[2]
+      @_fully_qualified_named_aggs[idx][type][agg_name]
+    end
 
     # Sets elasticsearch <tt>suggest</tt> search request param
     #
@@ -517,7 +598,7 @@ module Chewy
     #            }
     #          }}
     #
-    def suggest params = nil
+    def suggest(params = nil)
       if params
         chain { criteria.update_suggest params }
       else
@@ -550,7 +631,7 @@ module Chewy
     #            } }
     #          }}
     #
-    def strategy value = nil
+    def strategy(value = nil)
       chain { criteria.update_options strategy: value }
     end
 
@@ -576,7 +657,7 @@ module Chewy
     #            query: {text: {name: 'Johny'}}
     #          }}
     #
-    def query params
+    def query(params)
       chain { criteria.update_queries params }
     end
 
@@ -608,7 +689,7 @@ module Chewy
     #            filter: {term: {name: 'Johny'}}
     #          }}}}
     #
-    def filter params = nil, &block
+    def filter(params = nil, &block)
       params = Filters.new(&block).__render__ if block
       chain { criteria.update_filters params }
     end
@@ -639,7 +720,7 @@ module Chewy
     #            post_filter: {term: {name: 'Johny'}}
     #          }}
     #
-    def post_filter params = nil, &block
+    def post_filter(params = nil, &block)
       params = Filters.new(&block).__render__ if block
       chain { criteria.update_post_filters params }
     end
@@ -677,7 +758,7 @@ module Chewy
     #
     # Default value for <tt>:boost_mode</tt> might be changed
     # with <tt>Chewy.score_mode</tt> config option.
-    def boost_mode value
+    def boost_mode(value)
       chain { criteria.update_options boost_mode: value }
     end
 
@@ -717,7 +798,7 @@ module Chewy
     #
     #   Chewy.score_mode = :first
     #
-    def score_mode value
+    def score_mode(value)
       chain { criteria.update_options score_mode: value }
     end
 
@@ -729,7 +810,7 @@ module Chewy
     #            sort: ['first_name', 'last_name', {age: 'desc'}, {price: {order: 'asc', mode: 'avg'}}]
     #          }}
     #
-    def order *params
+    def order(*params)
       chain { criteria.update_sort params }
     end
 
@@ -741,7 +822,7 @@ module Chewy
     #            sort: [{price: {order: 'asc', mode: 'avg'}}]
     #          }}
     #
-    def reorder *params
+    def reorder(*params)
       chain { criteria.update_sort params, purge: true }
     end
 
@@ -753,7 +834,7 @@ module Chewy
     #            fields: ['first_name', 'last_name', 'age']
     #          }}
     #
-    def only *params
+    def only(*params)
       chain { criteria.update_fields params }
     end
 
@@ -765,7 +846,7 @@ module Chewy
     #            fields: ['age']
     #          }}
     #
-    def only! *params
+    def only!(*params)
       chain { criteria.update_fields params, purge: true }
     end
 
@@ -801,7 +882,7 @@ module Chewy
     #            ]}
     #          }}}}
     #
-    def types *params
+    def types(*params)
       chain { criteria.update_types params }
     end
 
@@ -813,8 +894,22 @@ module Chewy
     #            filter: {type: {value: 'manager'}}
     #          }}}}
     #
-    def types! *params
+    def types!(*params)
       chain { criteria.update_types params, purge: true }
+    end
+
+    # Sets <tt>search_type</tt> for request.
+    # For instance, one can use <tt>search_type=count</tt> to fetch only total count of records or to fetch only aggregations without fetching records.
+    #
+    #   scope = UsersIndex.search_type(:count)
+    #   scope.count == 0  # no records actually fetched
+    #   scope.total == 10 # but we know a total count of them
+    #
+    #   scope = UsersIndex.aggs(max_age: { max: { field: 'age' } }).search_type(:count)
+    #   max_age = scope.aggs['max_age']['value']
+    #
+    def search_type(value)
+      chain { criteria.update_search_options search_type: value }
     end
 
     # Merges two queries.
@@ -826,7 +921,7 @@ module Chewy
     #
     #   scope1.merge(scope2) == scope3 # => true
     #
-    def merge other
+    def merge(other)
       chain { criteria.merge!(other.criteria) }
     end
 
@@ -838,13 +933,20 @@ module Chewy
     #   UsersIndex::User.filter{ age <= 42 }.delete_all
     #
     def delete_all
+      if Runtime.version > '2.0'
+        plugins = Chewy.client.nodes.info(plugins: true)['nodes'].values.map { |item| item['plugins'] }.flatten
+        raise PluginMissing, 'install delete-by-query plugin' unless plugins.find { |item| item['name'] == 'delete-by-query' }
+      end
       request = chain { criteria.update_options simple: true }.send(:_request)
-      ActiveSupport::Notifications.instrument 'delete_query.chewy', request: request, index: _indexes.one? ? _indexes.first : _indexes do
+      ActiveSupport::Notifications.instrument 'delete_query.chewy',
+        request: request, indexes: _indexes, types: _types,
+        index: _indexes.one? ? _indexes.first : _indexes,
+        type: _types.one? ? _types.first : _types do
         Chewy.client.delete_by_query(request)
       end
     end
 
-    # Deletes all records matching a query.
+    # Find all records matching a query.
     #
     #   UsersIndex.find(42)
     #   UsersIndex.filter{ age <= 42 }.find(42)
@@ -858,11 +960,29 @@ module Chewy
     #    UsersIndex::User.find([8, 13])  # array of objects with ids in [8, 13]
     #    UsersIndex::User.find([42])     # array of the object with id == 42
     #
-    def find *ids
+    def find(*ids)
       results = chain { criteria.update_options simple: true }.filter { _id == ids.flatten }.to_a
 
-      raise Chewy::DocumentNotFound.new("Could not find documents for ids #{ids.flatten}") if results.empty?
+      raise Chewy::DocumentNotFound, "Could not find documents for ids #{ids.flatten}" if results.empty?
       ids.one? && !ids.first.is_a?(Array) ? results.first : results
+    end
+
+    # Returns true if there are at least one document that matches the query
+    #
+    #   PlacesIndex.query(...).filter(...).exists?
+    #
+    def exists?
+      search_type(:count).total > 0
+    end
+
+    # Sets limit to be equal to total documents count
+    #
+    #  PlacesIndex.query(...).filter(...).unlimited
+    #
+
+    def unlimited
+      count_query = search_type(:count)
+      offset(0).limit { count_query.total }
     end
 
     # Returns request total time elapsed as reported by elasticsearch
@@ -907,15 +1027,15 @@ module Chewy
 
   protected
 
-    def initialize_clone other
+    def initialize_clone(other)
       @criteria = other.criteria.clone
       reset
     end
 
   private
 
-    def chain &block
-      clone.tap { |q| q.instance_eval(&block) }
+    def chain(&block)
+      clone.tap { |q| q.instance_exec(&block) }
     end
 
     def reset
@@ -923,15 +1043,23 @@ module Chewy
     end
 
     def _request
-      @_request = criteria.request_body.merge(index: (@custom_index || _indexes.map(&:index_name)), type: _types.map(&:type_name))
+      @_request ||= begin
+        request = criteria.request_body
+        request[:index] = @custom_index || _indexes.map(&:index_name)
+        request[:type] = _types.map(&:type_name)
+        request
+      end
     end
 
     def _response
-      @_response ||= ActiveSupport::Notifications.instrument 'search_query.chewy', request: _request, index: @custom_index || (_indexes.one? ? _indexes.first : _indexes) do
+      @_response ||= ActiveSupport::Notifications.instrument 'search_query.chewy',
+        request: _request, indexes: _indexes, types: _types,
+        index: @custom_index || (_indexes.one? ? _indexes.first : _indexes),
+        type: _types.one? ? _types.first : _types do
         begin
           Chewy.client.search(_request)
         rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
-          raise e if e.message !~ /IndexMissingException/
+          raise e if e.message !~ /IndexMissingException/ && e.message !~ /index_not_found_exception/
           {}
         end
       end
@@ -939,15 +1067,15 @@ module Chewy
 
     def _results
       @_results ||= (criteria.none? || _response == {} ? [] : _response['hits']['hits']).map do |hit|
-        attributes = (hit['_source'] || {}).merge(hit['highlight'] || {}, &RESULT_MERGER)
-        attributes.reverse_merge!(id: hit['_id'])
+        attributes = (hit['_source'] || {})
+          .reverse_merge(id: hit['_id'])
           .merge!(_score: hit['_score'])
           .merge!(_explanation: hit['_explanation'])
 
         attributes[:timestamp] = attributes.delete '@timestamp' rescue nil
 
         if _derive_index(hit['_index'])
-          wrapper = _derive_index(hit['_index']).type_hash[hit['_type']].new attributes
+          wrapper = _derive_index(hit['_index']).type(hit['_type']).new(attributes)
         else
           wrapper = LogstashIndex.type_hash[hit['_type']].new attributes
         end
@@ -959,14 +1087,17 @@ module Chewy
     def _collection
       @_collection ||= begin
         _load_objects! if criteria.options[:preload]
-        criteria.options[:preload] && criteria.options[:loaded_objects] ?
-          _results.map(&:_object) : _results
+        if criteria.options[:preload] && criteria.options[:loaded_objects]
+          _results.map(&:_object)
+        else
+          _results
+        end
       end
     end
 
-    def _derive_index index_name
+    def _derive_index(index_name)
       (@derive_index ||= {})[index_name] ||= _indexes_hash[index_name] ||
-        _indexes_hash[_indexes_hash.keys.sort_by(&:length).reverse.detect { |name| index_name.starts_with?(name) }]
+        _indexes_hash[_indexes_hash.keys.sort_by(&:length).reverse.detect { |name| index_name.start_with?(name) }]
     end
 
     def _indexes_hash

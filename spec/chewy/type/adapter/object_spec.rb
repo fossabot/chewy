@@ -29,6 +29,13 @@ describe Chewy::Type::Adapter::Object do
     end
   end
 
+  describe '#identify' do
+    let!(:objects) { Array.new(3) { double } }
+
+    specify { expect(subject.identify(objects)).to eq(objects) }
+    specify { expect(subject.identify(objects.first)).to eq([objects.first]) }
+  end
+
   describe '#import' do
     def import(*args)
       result = []
@@ -36,70 +43,76 @@ describe Chewy::Type::Adapter::Object do
       result
     end
 
-    specify { expect(subject.import(3.times.map { |i| double }) { |data| true }).to eq(true) }
-    specify { expect(subject.import(3.times.map { |i| double }) { |data| false }).to eq(false) }
+    specify { expect(subject.import(Array.new(3) { double }) { |_data| true }).to eq(true) }
+    specify { expect(subject.import(Array.new(3) { double }) { |_data| false }).to eq(false) }
 
     context do
-      let(:objects) { 3.times.map { |i| double } }
-      let(:deleted) { 2.times.map { |i| double(destroyed?: true) } }
+      let(:objects) { Array.new(3) { double } }
+      let(:deleted) { Array.new(2) { double(destroyed?: true) } }
       subject { described_class.new('product') }
 
       specify { expect(import).to eq([]) }
-      specify { expect(import(objects)).to eq([{index: objects}]) }
-      specify { expect(import(objects, batch_size: 2))
-          .to eq([{index: objects.first(2)}, {index: objects.last(1)}]) }
-      specify { expect(import(objects, deleted)).to eq([{index: objects, delete: deleted}]) }
-      specify { expect(import(objects, deleted, batch_size: 2)).to eq([
-          {index: objects.first(2)},
-          {index: objects.last(1), delete: deleted.first(1)},
-          {delete: deleted.last(1)}]) }
+      specify { expect(import(nil)).to eq([]) }
 
-      specify { expect(import(objects.first, nil)).to eq([{index: [objects.first]}]) }
+      specify { expect(import(objects)).to eq([{ index: objects }]) }
+      specify do
+        expect(import(objects, batch_size: 2))
+          .to eq([{ index: objects.first(2) }, { index: objects.last(1) }])
+      end
+      specify { expect(import(objects, deleted)).to eq([{ index: objects, delete: deleted }]) }
+      specify do
+        expect(import(objects, deleted, batch_size: 2)).to eq([
+          { index: objects.first(2) },
+          { index: objects.last(1), delete: deleted.first(1) },
+          { delete: deleted.last(1) }
+        ])
+      end
 
-      context do
-        let(:deleted) { 2.times.map { |i| double(delete_from_index?: true, destroyed?: true) } }
-        specify { expect(import(deleted)).to eq([{delete: deleted}]) }
+      specify { expect(import(objects.first, nil)).to eq([{ index: [objects.first] }]) }
+
+      context 'initial data' do
+        subject { described_class.new -> { objects } }
+
+        specify { expect(import).to eq([{ index: objects }]) }
+        specify { expect(import(nil)).to eq([]) }
+
+        specify { expect(import(objects[0..1])).to eq([{ index: objects[0..1] }]) }
+        specify do
+          expect(import(batch_size: 2))
+            .to eq([{ index: objects.first(2) }, { index: objects.last(1) }])
+        end
       end
 
       context do
-        let(:deleted) { 2.times.map { |i| double(delete_from_index?: true, destroyed?: false) } }
-        specify { expect(import(deleted)).to eq([{delete: deleted}]) }
+        subject { described_class.new('product', delete_if: :delete?) }
+        let(:deleted) do
+          [
+            double(delete?: true, destroyed?: true),
+            double(delete?: true, destroyed?: false),
+            double(delete?: false, destroyed?: true),
+            double(delete?: false, destroyed?: false)
+          ]
+        end
+
+        specify do
+          expect(import(deleted)).to eq([
+            { delete: deleted[0..2], index: deleted.last(1) }
+          ])
+        end
       end
-
-
-      context do
-        let(:deleted) { 2.times.map { |i| double(delete_from_index?: false, destroyed?: true) } }
-        specify { expect(import(deleted)).to eq([{delete: deleted}]) }
-      end
-
-      context do
-        let(:deleted) { 2.times.map { |i| double(delete_from_index?: false, destroyed?: false) } }
-        specify { expect(import(deleted)).to eq([{index: deleted}]) }
-      end
-    end
-
-    context do
-      let(:products) { 3.times.map { |i| double.tap { |product|
-        allow(product).to receive(:is_a?).with(Product).and_return(true)
-      } } }
-      let(:non_product) { double }
-      subject { described_class.new(Product) }
-
-      specify { expect(import(products)).to eq([{index: products}]) }
-      specify { expect { import(products, non_product) {} }.to raise_error }
     end
 
     context 'error handling' do
-      let(:products) { 3.times.map { |i| double.tap { |product| allow(product).to receive_messages(rating: i.next) } } }
-      let(:deleted) { 2.times.map { |i| double(destroyed?: true, rating: i + 4) } }
+      let(:products) { Array.new(3) { |i| double.tap { |product| allow(product).to receive_messages(rating: i.next) } } }
+      let(:deleted) { Array.new(2) { |i| double(destroyed?: true, rating: i + 4) } }
       subject { described_class.new('product') }
 
       let(:data_comparer) do
         ->(n, data) { (data[:index] || data[:delete]).first.rating != n }
       end
 
-      specify { expect(subject.import(products, deleted) { |data| true }).to eq(true) }
-      specify { expect(subject.import(products, deleted) { |data| false }).to eq(false) }
+      specify { expect(subject.import(products, deleted) { |_data| true }).to eq(true) }
+      specify { expect(subject.import(products, deleted) { |_data| false }).to eq(false) }
       specify { expect(subject.import(products, deleted, batch_size: 1, &data_comparer.curry[1])).to eq(false) }
       specify { expect(subject.import(products, deleted, batch_size: 1, &data_comparer.curry[2])).to eq(false) }
       specify { expect(subject.import(products, deleted, batch_size: 1, &data_comparer.curry[3])).to eq(false) }
@@ -111,25 +124,32 @@ describe Chewy::Type::Adapter::Object do
   describe '#load' do
     context do
       subject { described_class.new('product') }
-      let(:objects) { 3.times.map { |i| double } }
+      let(:objects) { Array.new(3) { double } }
 
       specify { expect(subject.load(objects)).to eq(objects) }
     end
 
-    context do
-      before { allow(Product).to receive(:wrap) { |object| allow(object).to receive_messages(wrapped?: true); object } }
-      subject { described_class.new(Product) }
-      let(:objects) { 3.times.map { |i| double(wrapped?: false) } }
+    [:wrap, :load_one].each do |load_method|
+      context do
+        before do
+          allow(Product).to receive(load_method) { |object|
+                              allow(object).to receive_messages(wrapped?: true)
+                              object
+                            }
+        end
+        subject { described_class.new(Product) }
+        let(:objects) { Array.new(3) { double(wrapped?: false) } }
 
-      specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:wrapped?) } }
-    end
+        specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:wrapped?) } }
+      end
 
-    context do
-      before { allow(Product).to receive(:wrap) { |object| nil } }
-      subject { described_class.new(Product) }
-      let(:objects) { 3.times.map { |i| double(wrapped?: false) } }
+      context do
+        before { allow(Product).to receive(load_method) { |_object| nil } }
+        subject { described_class.new(Product) }
+        let(:objects) { Array.new(3) { double(wrapped?: false) } }
 
-      specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:nil?) } }
+        specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:nil?) } }
+      end
     end
   end
 end

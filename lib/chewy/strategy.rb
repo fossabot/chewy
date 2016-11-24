@@ -3,6 +3,27 @@ require 'chewy/strategy/bypass'
 require 'chewy/strategy/urgent'
 require 'chewy/strategy/atomic'
 
+begin
+  require 'resque'
+  require 'chewy/strategy/resque'
+rescue LoadError
+  nil
+end
+
+begin
+  require 'sidekiq'
+  require 'chewy/strategy/sidekiq'
+rescue LoadError
+  nil
+end
+
+begin
+  require 'active_job'
+  require 'chewy/strategy/active_job'
+rescue LoadError
+  nil
+end
+
 module Chewy
   # This class represents strategies stack with `:base`
   # Strategy on top of it. This causes raising exceptions
@@ -15,58 +36,49 @@ module Chewy
   #     User.last.save # Save user according to the `:atomic` strategy rules
   #   end
   #
-  # Strategies are designed to allow nesting, so it is possible
-  # to redefine it for nested contexts.
-  #
-  #   Chewy.strategy(:atomic) do
-  #     city1.do_update!
-  #     Chewy.strategy(:urgent) do
-  #       city2.do_update!
-  #       city3.do_update!
-  #       # there will be 2 update index requests for city2 and city3
-  #     end
-  #     city4..do_update!
-  #     # city1 and city4 will be grouped in one index update request
-  #   end
-  #
-  # It is possible to nest strategies without blocks:
-  #
-  #   Chewy.strategy(:urgent)
-  #   city1.do_update! # index updated
-  #   Chewy.strategy(:bypass)
-  #   city2.do_update! # update bypassed
-  #   Chewy.strategy.pop
-  #   city3.do_update! # index updated again
-  #
   class Strategy
     def initialize
-      @stack = [Chewy::Strategy::Base.new]
+      @stack = [resolve(Chewy.root_strategy).new]
     end
 
     def current
       @stack.last
     end
 
-    def push name
-      @stack.push resolve(name).new
+    def push(name)
+      result = @stack.push resolve(name).new
+      debug "[#{@stack.size}] <- #{current.name}"
+      result
     end
 
     def pop
-      raise 'Strategy stack is empty' if @stack.count <= 1
-      @stack.pop.tap(&:leave)
+      raise "Can't pop root strategy" if @stack.one?
+      debug "[#{@stack.size}] -> #{current.name}"
+      result = @stack.pop.tap(&:leave)
+      result
     end
 
-    def wrap name
-      push name
+    def wrap(name)
+      stack = push(name)
       yield
     ensure
-      pop
+      pop if stack
     end
 
   private
 
-    def resolve name
-      "Chewy::Strategy::#{name.to_s.camelize}".constantize or raise "Can't find update strategy `#{name}`"
+    def debug(string)
+      return unless Chewy.logger && Chewy.logger.debug?
+      line = caller.detect { |l| l !~ %r{lib/chewy/strategy.rb:|lib/chewy.rb:} }
+      Chewy.logger.debug(["DEBUG: Chewy strategies stack: #{string}", line.sub(/:in\s.+$/, '')].join(' @ '))
+    end
+
+    def resolve(name)
+      "Chewy::Strategy::#{name.to_s.camelize}".safe_constantize or raise "Can't find update strategy `#{name}`"
+    rescue NameError => ex
+      # WORKAROUND: Strange behavior of `safe_constantize` with mongoid gem
+      raise "Can't find update strategy `#{name}`" if ex.name.to_s.demodulize == name.to_s.camelize
+      raise
     end
   end
 end

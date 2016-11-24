@@ -4,11 +4,15 @@ Bundler.require
 
 begin
   require 'active_record'
+  require 'sequel'
 rescue LoadError
+  nil
 end
 
 require 'rspec/its'
 require 'rspec/collection_matchers'
+
+require 'timecop'
 
 Kaminari::Hooks.init if defined?(::Kaminari)
 
@@ -17,7 +21,7 @@ require 'support/class_helpers'
 
 require 'chewy/rspec'
 
-Chewy.configuration = {
+Chewy.settings = {
   host: 'localhost:9250',
   wait_for_status: 'green',
   index: {
@@ -28,6 +32,9 @@ Chewy.configuration = {
 
 RSpec.configure do |config|
   config.mock_with :rspec
+  config.order = :random
+  config.filter_run focus: true
+  config.run_all_when_everything_filtered = true
 
   config.include FailHelpers
   config.include ClassHelpers
@@ -37,10 +44,12 @@ if defined?(::ActiveRecord)
   require 'support/active_record'
 elsif defined?(::Mongoid)
   require 'support/mongoid'
+elsif defined?(::Sequel)
+  require 'support/sequel'
 else
   RSpec.configure do |config|
-    config.filter_run_excluding :orm
-    config.filter_run_excluding :mongoid
-    config.filter_run_excluding :active_record
+    [:orm, :mongoid, :active_record, :sequel].each do |group|
+      config.filter_run_excluding(group)
+    end
   end
 end

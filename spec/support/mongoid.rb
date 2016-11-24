@@ -5,8 +5,13 @@ CONFIG = {
     default: {
       uri: 'mongodb://127.0.0.1:27017/chewy_mongoid_test'
     }
+  },
+  clients: {
+    default: {
+      uri: 'mongodb://127.0.0.1:27017/chewy_mongoid_test'
+    }
   }
-}
+}.freeze
 
 Mongoid.configure do |config|
   config.load_configuration(CONFIG)
@@ -17,32 +22,41 @@ Mongoid.logger = Logger.new('/dev/null')
 module MongoidClassHelpers
   extend ActiveSupport::Concern
 
-  def stub_model name, superclass = nil, &block
-    model = name.to_s.camelize.constantize rescue nil
+  module Country
+    extend ActiveSupport::Concern
 
-    if model
-      model.class_eval(&block) if block
-      model
-    else
-      klass = if superclass && superclass.ancestors.include?(Mongoid::Document)
-        superclass
-      else
-        Class.new(*([superclass].compact)) do
-          include Mongoid::Document
-          store_in collection: name.to_s.tableize
-        end
-      end
+    included do
+      include Mongoid::Document
 
-      stub_class(name, klass, &block)
+      field :name, type: String
+      field :country_code, type: String
+      field :rating, type: Integer
     end
   end
 
-  def active_record?
-    false
+  module City
+    extend ActiveSupport::Concern
+
+    included do
+      include Mongoid::Document
+
+      field :name, type: String
+      field :rating, type: Integer
+    end
   end
 
-  def mongoid?
-    true
+  def adapter
+    :mongoid
+  end
+
+  def stub_model(name, superclass = nil, &block)
+    mixin = "MongoidClassHelpers::#{name.to_s.camelize}".safe_constantize || Mongoid::Document
+    superclass ||= Class.new do
+      include mixin
+      store_in collection: name.to_s.tableize
+    end
+
+    stub_class(name, superclass, &block)
   end
 end
 
@@ -50,6 +64,7 @@ RSpec.configure do |config|
   config.include MongoidClassHelpers
 
   config.filter_run_excluding :active_record
+  config.filter_run_excluding :sequel
 
   config.before(:suite) do
     DatabaseCleaner.clean_with :truncation
@@ -57,28 +72,6 @@ RSpec.configure do |config|
   end
 
   config.before do
-    Object.send(:remove_const, :City) if defined? City
-    Object.send(:remove_const, :Country) if defined? Country
-
-    class Country
-      include Mongoid::Document
-
-      field :name, type: String
-      field :country_code, type: String
-      field :rating, type: Integer
-
-      has_many :cities, order: :id.asc
-    end
-
-    class City
-      include Mongoid::Document
-
-      field :name, type: String
-      field :rating, type: Integer
-
-      belongs_to :country
-    end
-
     DatabaseCleaner.start
   end
 
