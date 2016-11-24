@@ -15,7 +15,7 @@ describe Chewy::Type::Import do
     end
   end
 
-  let!(:dummy_cities) { 3.times.map { |i| City.create(id: i + 1, name: "name#{i}") } }
+  let!(:dummy_cities) { Array.new(3) { |i| City.create(id: i + 1, name: "name#{i}") } }
   let(:city) { CitiesIndex::City }
 
   describe '.import', :orm do
@@ -58,15 +58,65 @@ describe Chewy::Type::Import do
     specify do
       dummy_cities.first.destroy
 
-      expect(CitiesIndex.client).to receive(:bulk).with(hash_including(
-        body: [{delete: {_id: dummy_cities.first.id}}]
-      ))
-
-      expect(CitiesIndex.client).to receive(:bulk).with(hash_including(
-        body: [{index: {_id: 2, data: {'name' => "name1"}}}, {index: {_id: 3, data: {'name' => "name2"}}}]
-      ))
+      imported = []
+      allow(CitiesIndex.client).to receive(:bulk) { |params|
+        imported << params[:body]
+        nil
+      }
 
       city.import dummy_cities.map(&:id), batch_size: 2
+      expect(imported.flatten).to match_array([
+        { index: { _id: 2, data: { 'name' => 'name1' } } },
+        { index: { _id: 3, data: { 'name' => 'name2' } } },
+        { delete: { _id: dummy_cities.first.id } }
+      ])
+    end
+
+    context ':bulk_size' do
+      specify { expect(city.import(dummy_cities.first, bulk_size: 1.2.kilobyte)).to eq(true) }
+      specify { expect(city.import(dummy_cities, bulk_size: 1.2.kilobyte)).to eq(true) }
+      specify { expect { city.import(dummy_cities, bulk_size: 1.2.kilobyte) }.to update_index(city).and_reindex(dummy_cities) }
+
+      specify do
+        dummy_cities.first.destroy
+
+        imported = []
+        allow(CitiesIndex.client).to receive(:bulk) { |params|
+          imported << params[:body]
+          nil
+        }
+
+        city.import dummy_cities.map(&:id), bulk_size: 1.2.kilobyte
+        expect(imported.flatten).to match_array([
+          %({"delete":{"_id":1}}\n),
+          %({"index":{"_id":2}}\n{"name":"name1"}\n{"index":{"_id":3}}\n{"name":"name2"}\n)
+        ])
+      end
+
+      context do
+        let!(:dummy_cities) { Array.new(3) { |i| City.create(id: i + 1, name: "name#{i}" * 20) } }
+
+        specify do
+          dummy_cities.first.destroy
+
+          imported = []
+          allow(CitiesIndex.client).to receive(:bulk) { |params|
+            imported << params[:body]
+            nil
+          }
+
+          city.import dummy_cities.map(&:id), bulk_size: 1.2.kilobyte
+          expect(imported.flatten).to match_array([
+            %({"delete":{"_id":1}}\n),
+            %({"index":{"_id":2}}\n{"name":"#{'name1' * 20}"}\n),
+            %({"index":{"_id":3}}\n{"name":"#{'name2' * 20}"}\n)
+          ])
+        end
+
+        specify do
+          expect { city.import dummy_cities.map(&:id), bulk_size: 1.1.kilobyte }.to raise_error ArgumentError
+        end
+      end
     end
 
     specify do
@@ -83,7 +133,8 @@ describe Chewy::Type::Import do
       before do
         names = %w(name0 name1)
 
-        criteria = if defined?(::Mongoid)
+        criteria = case adapter
+        when :mongoid
           { :name.in => names }
         else
           { name: names }
@@ -114,34 +165,34 @@ describe Chewy::Type::Import do
     context 'instrumentation payload' do
       specify do
         outer_payload = nil
-        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |name, start, finish, id, payload|
+        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |_name, _start, _finish, _id, payload|
           outer_payload = payload
         end
 
         dummy_cities.first.destroy
         city.import dummy_cities
-        expect(outer_payload).to eq({type: CitiesIndex::City, import: {delete: 1, index: 2}})
+        expect(outer_payload).to eq(type: CitiesIndex::City, import: { delete: 1, index: 2 })
       end
 
       specify do
         outer_payload = nil
-        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |name, start, finish, id, payload|
+        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |_name, _start, _finish, _id, payload|
           outer_payload = payload
         end
 
         dummy_cities.first.destroy
-        city.import dummy_cities, batch_size: 1
-        expect(outer_payload).to eq({type: CitiesIndex::City, import: {delete: 1, index: 2}})
+        city.import dummy_cities, batch_size: 2
+        expect(outer_payload).to eq(type: CitiesIndex::City, import: { delete: 1, index: 2 })
       end
 
       specify do
         outer_payload = nil
-        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |name, start, finish, id, payload|
+        ActiveSupport::Notifications.subscribe('import_objects.chewy') do |_name, _start, _finish, _id, payload|
           outer_payload = payload
         end
 
-        city.import dummy_cities, batch_size: 1
-        expect(outer_payload).to eq({type: CitiesIndex::City, import: {index: 3}})
+        city.import dummy_cities, batch_size: 2
+        expect(outer_payload).to eq(type: CitiesIndex::City, import: { index: 3 })
       end
 
       context do
@@ -153,22 +204,51 @@ describe Chewy::Type::Import do
           end
         end
 
+        let(:write_failure_exception) do
+          'WriteFailureException; nested: MapperParsingException[object mapping for [city] ' \
+            'tried to parse field [name] as object, but got EOF, has a concrete value been provided to it?]; '
+        end
+        let(:mapper_parsing_exception) do
+          'MapperParsingException[object mapping for [city] tried to parse field [name] ' \
+            'as object, but got EOF, has a concrete value been provided to it?]'
+        end
+
         specify do
+          skip_on_version_gte('2.0', 'format of exception changed in 2.x')
           outer_payload = nil
-          ActiveSupport::Notifications.subscribe('import_objects.chewy') do |name, start, finish, id, payload|
+          ActiveSupport::Notifications.subscribe('import_objects.chewy') do |_name, _start, _finish, _id, payload|
             outer_payload = payload
           end
 
-          city.import dummy_cities, batch_size: 1
-          expect(outer_payload).to eq({
-            type: CitiesIndex::City,
+          city.import dummy_cities, batch_size: 2
+          expect(outer_payload).to eq(type: CitiesIndex::City,
             errors: {
               index: {
-                'MapperParsingException[object mapping for [city] tried to parse as object, but got EOF, has a concrete value been provided to it?]' => ['1', '2', '3']
+                write_failure_exception => ['1'],
+                mapper_parsing_exception => %w(2 3)
               }
             },
-            import: {index: 3}
-          })
+            import: { index: 3 })
+        end
+
+        specify do
+          skip_on_version_lt('2.0', 'format of exception was changed')
+          outer_payload = nil
+          ActiveSupport::Notifications.subscribe('import_objects.chewy') do |_name, _start, _finish, _id, payload|
+            outer_payload = payload
+          end
+
+          city.import dummy_cities, batch_size: 2
+          expect(outer_payload).to eq(type: CitiesIndex::City,
+            errors: {
+              index: {
+                {
+                  'type' => 'mapper_parsing_exception',
+                  'reason' => 'object mapping for [name] tried to parse field [name] as object, but found a concrete value'
+                } => %w(1 2 3)
+              }
+            },
+            import: { index: 3 })
         end
       end
     end
@@ -192,14 +272,14 @@ describe Chewy::Type::Import do
         before do
           stub_index(:cities) do
             define_type City do
-              field :name, type: 'object', value: ->{ name == 'name1' ? name : {name: name} }
+              field :name, type: 'object', value: -> { name == 'name1' ? name : { name: name } }
             end
           end
         end
 
         specify { expect(city.import(dummy_cities)).to eq(false) }
         specify { expect(city.import(dummy_cities.map(&:id))).to eq(false) }
-        specify { expect(city.import(dummy_cities, batch_size: 1)).to eq(false) }
+        specify { expect(city.import(dummy_cities, batch_size: 2)).to eq(false) }
       end
     end
 
@@ -210,6 +290,7 @@ describe Chewy::Type::Import do
       before do
         stub_model(:country)
         stub_model(:city)
+        adapter == :sequel ? City.many_to_one(:country) : City.belongs_to(:country)
       end
 
       before do
@@ -231,12 +312,12 @@ describe Chewy::Type::Import do
       let(:child_city) { City.create(id: 4, country_id: country.id, name: 'city') }
       let(:city) { CountriesIndex::City }
 
-      specify { expect(city.import(child_city)).to eq(true)  }
+      specify { expect(city.import(child_city)).to eq(true) }
       specify { expect { city.import child_city }.to update_index(city).and_reindex(child_city) }
 
       specify do
         expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-          body: [{ index: { _id: child_city.id, parent: country.id, data: { 'name' => 'city' } } }]
+                                                               body: [{ index: { _id: child_city.id, parent: country.id, data: { 'name' => 'city' } } }]
         ))
 
         city.import child_city
@@ -249,10 +330,10 @@ describe Chewy::Type::Import do
           child_city.update_attributes(country_id: another_country.id)
 
           expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-            body: [
-              { delete: { _id: child_city.id, parent: country.id.to_s } },
-              { index: { _id: child_city.id, parent: another_country.id, data: { 'name' => 'city' } } }
-            ]
+                                                                 body: [
+                                                                   { delete: { _id: child_city.id, parent: country.id.to_s } },
+                                                                   { index: { _id: child_city.id, parent: another_country.id, data: { 'name' => 'city' } } }
+                                                                 ]
           ))
 
           city.import child_city
@@ -262,7 +343,7 @@ describe Chewy::Type::Import do
           child_city.destroy
 
           expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-            body: [{ delete: { _id: child_city.id, parent: country.id.to_s } }]
+                                                                 body: [{ delete: { _id: child_city.id, parent: country.id.to_s } }]
           ))
 
           city.import child_city
@@ -272,22 +353,29 @@ describe Chewy::Type::Import do
           child_city.destroy
 
           expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-            body: [{ delete: { _id: child_city.id, parent: country.id.to_s } }]
+                                                                 body: [{ delete: { _id: child_city.id, parent: country.id.to_s } }]
           ))
 
           city.import child_city.id
         end
+
+        specify do
+          child_city.destroy
+
+          expect(city.import(child_city)).to eq(true)
+          expect(city.import(child_city)).to eq(true)
+        end
       end
     end
-    
+
     context 'root id', :orm do
       let(:canada) { Country.create(id: 1, name: 'Canada', country_code: 'CA', rating: 4) }
       let(:country)  { CountriesIndex::Country }
-      
+
       before do
         stub_model(:country)
       end
-      
+
       before do
         stub_index(:countries) do
           define_type Country do
@@ -298,39 +386,49 @@ describe Chewy::Type::Import do
           end
         end
       end
-      
-      specify { expect( country.import(canada) ).to eq(true)  }
+
+      specify { expect(country.import(canada)).to eq(true) }
       specify { expect { country.import(canada) }.to update_index(country).and_reindex(canada.country_code) }
 
       specify do
         expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-          body: [{ index: { _id: canada.country_code, data: { 'name' => 'Canada', 'rating' => 4 } } }]
+                                                               body: [{ index: { _id: canada.country_code, data: { 'name' => 'Canada', 'rating' => 4 } } }]
         ))
 
         country.import canada
       end
-      
+
       specify do
         canada.update_attributes(rating: 9)
 
         expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-          body: [{ index: { _id: canada.country_code, data: { 'name' => 'Canada', 'rating' => 9 } } }]
+                                                               body: [{ index: { _id: canada.country_code, data: { 'name' => 'Canada', 'rating' => 9 } } }]
         ))
 
         country.import canada
       end
-      
+
       specify do
         canada.destroy
 
         expect(CountriesIndex.client).to receive(:bulk).with(hash_including(
-          body: [{ delete: { _id: canada.country_code } }]
+                                                               body: [{ delete: { _id: canada.country_code } }]
         ))
 
         country.import canada
       end
-      
-    end  # END root id
+    end
+
+    context 'default_import_options is set' do
+      before do
+        CitiesIndex::City.default_import_options(batch_size: 500, bulk_size: 1.megabyte)
+      end
+
+      specify do
+        expect(CitiesIndex::City.adapter).to receive(:import).with(batch_size: 500, bulk_size: 1.megabyte)
+        CitiesIndex::City.import
+      end
+    end
   end
 
   describe '.import!', :orm do
@@ -346,6 +444,21 @@ describe Chewy::Type::Import do
       end
 
       specify { expect { city.import!(dummy_cities) }.to raise_error Chewy::ImportFailed }
+    end
+
+    context 'when .import fails' do
+      before do
+        allow(city).to receive(:import) { raise }
+      end
+
+      specify do
+        expect(ActiveSupport::Notifications).to receive(:unsubscribe)
+        begin
+          city.import!(dummy_cities)
+        rescue
+          nil
+        end
+      end
     end
   end
 end

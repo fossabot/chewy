@@ -6,6 +6,8 @@ module Chewy
       included do
         class_attribute :root_object, instance_reader: false, instance_writer: false
         class_attribute :_templates
+        class_attribute :_agg_defs
+        self._agg_defs = {}
       end
 
       module ClassMethods
@@ -29,8 +31,8 @@ module Chewy
         #     end
         #   end
         #
-        def root options = {}, &block
-          raise "Root is already defined" if root_object
+        def root(options = {}, &block)
+          raise 'Root is already defined' if root_object
           build_root(options, &block)
         end
 
@@ -94,7 +96,7 @@ module Chewy
         #     field :en, value: ->(name) { name['en'] }
         #   end
         #
-        # Off course it is possible to define object fields contents dynamically
+        # Of course it is possible to define object fields contents dynamically
         # but make sure evaluation proc returns hash:
         #
         #   field :name, type: 'object', value: -> { name_translations }
@@ -107,9 +109,9 @@ module Chewy
         #     field :sorted, analyzer: 'sorted'
         #   end
         #
-        def field *args, &block
+        def field(*args, &block)
           options = args.extract_options!
-          build_root unless root_object
+          build_root
 
           if args.size > 1
             args.map { |name| field(name, options) }
@@ -118,12 +120,34 @@ module Chewy
           end
         end
 
-        # Defines dynamic template in mapping root objests
+        # Defines an aggregation that can be bound to a query or filter
+        #
+        #   Suppose that a user has posts and each post has ratings
+        #   avg_post_rating is the mean of all ratings
+        #
+        #   class UsersIndex < Chewy::Index
+        #     define_type User do
+        #       field :posts do
+        #         field :rating
+        #       end
+        #
+        #       agg :avg_rating do
+        #         { avg: { field: 'posts.rating' } }
+        #       end
+        #     end
+        #   end
+        def agg(name, &block)
+          build_root
+          self._agg_defs = _agg_defs.merge(name => block)
+        end
+        alias_method :aggregation, :agg
+
+        # Defines dynamic template in mapping root objects
         #
         #   class CarsIndex < Chewy::Index
         #     define_type Car do
         #       template 'model.*', type: 'string', analyzer: 'special'
-        #       field 'model', type: 'object' # here we can put { ru: 'Мерседес', en: 'Mercedes' }
+        #       field 'model', type: 'object' # here we can put { de: 'Der Mercedes', en: 'Mercedes' }
         #                                     # and template will be applyed to this field
         #     end
         #   end
@@ -138,10 +162,8 @@ module Chewy
         #   template /tit.+/, 'string', mapping_hash # "match_mapping_type" as the optionsl second argument
         #   template template42: {match: 'hello*', mapping: {type: 'object'}} # or even pass a template as is
         #
-        def template *args
-          build_root unless root_object
-
-          root_object.dynamic_template *args
+        def template(*args)
+          build_root.dynamic_template(*args)
         end
         alias_method :dynamic_template, :template
 
@@ -153,19 +175,25 @@ module Chewy
 
       private
 
-        def expand_nested field, &block
-          @_current_field.nested(field) if @_current_field
-          if block
-            previous_field, @_current_field = @_current_field, field
-            block.call
-            @_current_field = previous_field
+        def expand_nested(field, &block)
+          if @_current_field
+            field.parent = @_current_field
+            @_current_field.children.push(field)
           end
+
+          return unless block
+
+          previous_field = @_current_field
+          @_current_field = field
+          yield
+          @_current_field = previous_field
         end
 
-        def build_root options = {}, &block
+        def build_root(options = {}, &block)
+          return root_object if root_object
           self.root_object = Chewy::Fields::Root.new(type_name, options)
-          expand_nested(self.root_object, &block)
-          @_current_field = self.root_object
+          expand_nested(root_object, &block)
+          @_current_field = root_object
         end
       end
     end

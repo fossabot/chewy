@@ -3,12 +3,12 @@ module Chewy
     module Observe
       extend ActiveSupport::Concern
 
-      module MongoidMethods
-        def update_index(type_name, *args, &block)
+      module Helpers
+        def update_proc(type_name, *args, &block)
           options = args.extract_options!
           method = args.first
 
-          update = Proc.new do
+          proc do
             backreference = if method && method.to_s == 'self'
               self
             elsif method
@@ -17,35 +17,53 @@ module Chewy
               instance_eval(&block)
             end
 
-            Chewy.derive_type(type_name).update_index(backreference, options)
-          end
+            reference = if type_name.is_a?(Proc)
+              if type_name.arity.zero?
+                instance_exec(&type_name)
+              else
+                type_name.call(self)
+              end
+            else
+              type_name
+            end
 
-          after_save &update
-          after_destroy &update
+            Chewy.derive_type(reference).update_index(backreference, options)
+          end
+        end
+
+        def extract_callback_options!(args)
+          options = args.extract_options!
+          result = options.each_key.with_object({}) do |key, hash|
+            hash[key] = options.delete(key) if [:if, :unless].include?(key)
+          end
+          args.push(options) unless options.empty?
+          result
+        end
+      end
+
+      extend Helpers
+
+      module MongoidMethods
+        def update_index(type_name, *args, &block)
+          callback_options = Observe.extract_callback_options!(args)
+          update_proc = Observe.update_proc(type_name, *args, &block)
+
+          after_save(callback_options, &update_proc)
+          after_destroy(callback_options, &update_proc)
         end
       end
 
       module ActiveRecordMethods
         def update_index(type_name, *args, &block)
-          options = args.extract_options!
-          method = args.first
+          callback_options = Observe.extract_callback_options!(args)
+          update_proc = Observe.update_proc(type_name, *args, &block)
 
-          update = Proc.new do
-            clear_association_cache if Chewy.strategy.current.is_a?(Chewy::Strategy::Urgent)
-
-            backreference = if method && method.to_s == 'self'
-              self
-            elsif method
-              send(method)
-            else
-              instance_eval(&block)
-            end
-
-            Chewy.derive_type(type_name).update_index(backreference, options)
+          if Chewy.use_after_commit_callbacks
+            after_commit(callback_options, &update_proc)
+          else
+            after_save(callback_options, &update_proc)
+            after_destroy(callback_options, &update_proc)
           end
-
-          after_save &update
-          after_destroy &update
         end
       end
 

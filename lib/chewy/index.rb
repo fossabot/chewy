@@ -29,17 +29,27 @@ module Chewy
     #   UsersIndex.index_name # => 'dudes'
     #
     def self.index_name(suggest = nil)
+      raise UndefinedIndex unless _index_name(suggest)
+      @index_name ||= build_index_name(_index_name, prefix: default_prefix)
+    end
+
+    def self._index_name(suggest = nil)
       if suggest
-        @index_name = build_index_name(suggest, prefix: Chewy.configuration[:prefix])
-      else
-        @index_name ||= begin
-          build_index_name(
-            name.gsub(/Index\Z/, '').demodulize.underscore,
-            prefix: Chewy.configuration[:prefix]
-          ) if name
-        end
+        @_index_name = suggest
+      elsif name
+        @_index_name ||= name.sub(/Index\Z/, '').demodulize.underscore
       end
-      @index_name or raise UndefinedIndex
+      @_index_name
+    end
+
+    def self.derivable_index_name
+      @_derivable_index_name ||= name.sub(/Index\Z/, '').underscore
+    end
+
+    # Setups or returns pure Elasticsearch index name
+    # without any prefixes/suffixes
+    def self.default_prefix
+      Chewy.configuration[:prefix]
     end
 
     # Defines type for the index. Arguments depends on adapter used. For
@@ -80,11 +90,14 @@ module Chewy
       type_class = Chewy.create_type(self, target, options, &block)
       self.type_hash = type_hash.merge(type_class.type_name => type_class)
 
-      class_eval <<-METHOD, __FILE__, __LINE__ + 1
-        def self.#{type_class.type_name}
-          type_hash['#{type_class.type_name}']
-        end
-      METHOD
+      unless respond_to?(type_class.type_name)
+        class_eval <<-METHOD, __FILE__, __LINE__ + 1
+          def self.#{type_class.type_name}
+            ActiveSupport::Deprecation.warn("`#{self}.#{type_class.type_name}` accessor is deprecated and will be removed soon. Use `#{type_class}` directly instead.")
+            type_hash['#{type_class.type_name}']
+          end
+        METHOD
+      end
     end
 
     # Types method has double usage.
@@ -92,15 +105,15 @@ module Chewy
     #
     #   UsersIndex.types # => [UsersIndex::Admin, UsersIndex::Manager, UsersIndex::User]
     #
-    # If arguments are passed it treats like a part of chainable query dsl and
+    # If arguments are passed it treats like a part of chainable query DSL and
     # adds types array for index to select.
     #
     #   UsersIndex.filters { name =~ 'ro' }.types(:admin, :manager)
     #   UsersIndex.types(:admin, :manager).filters { name =~ 'ro' } # the same as the first example
     #
-    def self.types *args
-      if args.any?
-        all.types *args
+    def self.types(*args)
+      if args.present?
+        all.types(*args)
       else
         type_hash.values
       end
@@ -112,6 +125,14 @@ module Chewy
     #
     def self.type_names
       type_hash.keys
+    end
+
+    # Returns named type:
+    #
+    #    UserIndex.type('admin') # => UsersIndex::Admin
+    #
+    def self.type(type_name)
+      type_hash.fetch(type_name) { raise UndefinedType, "Unknown type in #{name}: #{type_name}" }
     end
 
     # Used as a part of index definition DSL. Defines settings:
@@ -137,11 +158,19 @@ module Chewy
       self._settings = Chewy::Index::Settings.new params
     end
 
-  private
+    # Returns list of public class methods defined in current index
+    #
+    def self.scopes
+      public_methods - Chewy::Index.public_methods - type_names.map(&:to_sym)
+    end
 
-    def self.build_index_name *args
+    def self.journal?
+      types.any?(&:journal?)
+    end
+
+    def self.build_index_name(*args)
       options = args.extract_options!
-      [options[:prefix], args.first || index_name, options[:suffix]].reject(&:blank?).join(?_)
+      [options[:prefix], args.first || index_name, options[:suffix]].reject(&:blank?).join('_')
     end
 
     def self.settings_hash
@@ -150,7 +179,7 @@ module Chewy
 
     def self.mappings_hash
       mappings = types.map(&:mappings_hash).inject(:merge)
-      mappings.present? ? {mappings: mappings} : {}
+      mappings.present? ? { mappings: mappings } : {}
     end
 
     def self.index_params

@@ -1,14 +1,276 @@
 # master
 
+## Changes
+
+  * Confugurable `Chewy.indices_path` (@robacarp, #414)
+
+  * [Journaling](https://github.com/toptal/chewy/#journaling) implementation (@sergey-kintsel, #409)
+
+  * Minitest helpers (@robacarp, #396)
+
+  * `Chewy::Query#unlimited` to fetch all the records (@sergey-kintsel, #393)
+
+  * `Chewy::Query#exists?` (@sergey-kintsel, #386)
+
+  * Import otimizations (#381, #376)
+
+  * Additional import optimization technique - [raw import](https://github.com/toptal/chewy/#raw-import) (@DNNX, #375)
+
+  * `weight` scoring dunction was added to the search DSL (@sevab, #380)
+
+  * Rake tasks support multiple indexes and exceptions: `rake chewy:reset[users,projects]`, `rake chewy:update[-projects]`
+
+  * Witchcraft™ supports dynamically generated procs with variables from closure.
+  
+  * Add the `track_scores` option to the query; `_score` to be computed and tracked even when there are no `_score` in sort. (@dmitry)
+
+  * Added `Query#preference` for specifying shard replicas to query against. (@menglewis)
+
+## Bugfixes
+
+  * Fix routing_missing_exception on delete with parent missing (@guigs, #398)
+
+  * Sequesl custom primary keys handling fix (@okliv, #385)
+
+  * Bulk import fixes (@0x0badc0de, #374)
+
+# Version 0.8.4
+
+## Changes
+
+  * Brand new import `:bulk_size` option, set desired ElasticSearch bulk size in bytes
+
+  * Witchcraft™ technology
+
+  * Configurable per-type default import options (@barthez, #341)
+
+  * Various codebase optimizations (@DNNX, @pyromaniac)
+
+  * `update_index` Rspec matcher messages improvements
+
+  * `:all` rake tasks deprecation
+
+  * Scoped notification subscriptions in rake tasks (@0x0badc0de, #335)
+
+  * Async strategies workers accept options (@dnd, #321)
+
+  * Prefix is configurable per-index (@mikeyhogarth, #314)
+
+  * Ability to pass proc for transport configuration (@feymartynov, @reidab, #302, #339)
+
+  * ElasticSearch 2 support (@sergeygaychuk, #297)
+
+  * Accessing types with methods is deprecated. Use `MyIndex::MyType` constant reference instead of `MyIndex.my_type` method.
+
+  * Sequel adapter improvements (@mrbrdo, #294)
+
+## Bugfixes
+
+  * Mongoid atomic strategy fix (#325)
+
+  * Method missing fix (@jesjos, #324)
+
+  * Hash fields composition fix (@eproulx-petalmd, #319)
+
+  * Better errors handling in strategies (@barthez, #306)
+
+  * Assets strategies silencer fix for Rails 5 API mode (@clupprich, #303)
+
+# Version 0.8.3
+
+## Changes
+
+  * Sequel support completely reworked to use common ORM implementations + better sequel specs covarage.
+
+## Bugfixes
+
+  * Sequel objects transactional destruction fix
+
+  * Correct Rspec mocking framework checking (@mainameiz)
+
+  * Atomic strategy is now compatible with custom ids proc.
+
+  * Safe unsubscribe on import (@marshall-lee)
+
+  * Correct custom assets path silencer (@davekaro)
+
 ## Incompatible changes:
+
+  * `Chewy.atomic` and `Chewy.urgent_update=` methods was removed from the codebase, use `Chewy.strategy` block instead.
+
+  * `delete_from_index?` hook is removed from the codebase.
+
+# Version 0.8.2
+
+## Changes
+
+  * ActiveJob strategy by @mkcode
+
+  * Async strategies tweak (@AndreySavelyev)
+
+  * GeoPoint readme (@joonty)
+
+  * Multiple grammar fixes and code improvements (@biow0lf)
+
+  * Named aggregations by @caldwecr
+
+  * Sequel adapter by @jirutka
+
+  * Rake helper methods extracted (@caldwecr, @jirutka)
+
+  * Multiple grammar fixes (@henrebotha)
+
+  * Ability to pass a proc to `update_index` to define updating index dynamically (@SeTeM)
+
+
+## Bugfixes
+
+  * Fixed transport logger and tracer configuration
+
+# Version 0.8.1
+
+## Bugfixes
+
+  * Added support of elasticsearch-ruby 1.0.10
+
+# Version 0.8.0
+
+## Incompatible changes:
+
+  * `:atomic` and `:urgent` strategies are using `import!` method raising exceptions
+
+## Changes
+
+  * Crutches™ technology
+
+  * Added `.script_fields` chainable method to query (@ka8725)
+
+  * `update_index` matcher mocha support (@lardawge)
+
+  * `:resque` async strategy
+
+  * `:sidekiq` async strategy (inspired by @sharkzp)
+
+  * Added `Query#search_type` for `search_type` request option setup (@marshall-lee)
+
+## Bugfixes
+
+  * Rails 4.2 migrations are not raising UndefinedUpdateStrategy anymore on data updates
+
+  * Mongoid random failing specs fixes (@marshall-lee)
+
+# Version 0.7.0
+
+## Incompatible changes:
+
+  * `Chewy.use_after_commit_callbacks = false` returns previous RDBMS behavior
+  in tests
+
+  * ActiveRecord import is now called after_commit instead of after_save and after_destroy
+
+  * Import now respects default scope and removes unmatched documents
+
+  * `delete_from_index?` method is deprecated, use
+
+    ```ruby
+      define_type User, delete_if: ->{ removed? } do
+        ...
+      end
+    ```
+
+  * `Chewy.request_strategy` to configure action controller's request wrapping strategy
+
+  * `Chewy.root_strategy` to configure the first strategy in stack
+
+  * Default strategy for controller actions is `:atomic`
+
+  * Default strategy for activerecord migrations is `:bypass`
+
+  * Default strategy for sandbox console is `:bypass`
+
+  * Default strategy for rails console is `:urgent`
+
+  * `Chewy.configuration` was renamed to `Chewy.settings`
 
   * Reworked index update strategies implementation. `Chewy.atomic`
   and `Chewy.urgent_update` are now deprecated in favour of the new
   `Chewy.strategy` API.
 
+  * Loading objects for object-sourced types using `wrap` method is
+  deprecated, `load_one` method should be used instead. Or method name
+  might be passed to `define_type`:
+
+    ```ruby
+      class GeoData
+        def self.get_data(elasticsearch_document)
+          REDIS.get("geo_data_#{elasticsearch_document.id}")
+        end
+      end
+
+      ...
+        define_type GeoData, load_one_method: :get_data do
+          ...
+        end
+    ```
+
 ## Changes
 
-  * Implemented basic names scopes
+  * Multiple enhancements by @DNNX
+
+  * Added `script_fields` to search criteria (@ka8725)
+
+  * ORM adapters now completely relies on the default scope. This means every scope or objects passed to import are merged with default scope so basically there is no need to define `delete_if` block. Default scope strongly restricts objects which may land in the current index.
+
+    ```ruby
+      define_type Country.where("rating > 30") do
+
+      end
+
+      # this code would import only countries with rating between 30 and 50
+      CountriesIndex::Country.import(Country.where("rating < 50"))
+
+      # the same is true for arrays of objects or ids
+      CountriesIndex::Country.import(Country.where("rating < 50").to_a)
+      CountriesIndex::Country.import(Country.where("rating < 50").pluck(:id))
+    ```
+
+  * Object adapter supports custom initial import and load methods, so it
+  could be configured to be used with procs or any class responding to `call`
+  method.
+
+    ```ruby
+      class GeoData
+        def self.call
+          REDIS.get_all
+        end
+      end
+
+      ...
+        define_type GeoData do
+          ...
+        end
+    ```
+
+  * Nested fields value procs additional arguments: parent objects.
+
+    ```ruby
+      define_type Country do
+        field :name
+        field :cities do
+          field :district, value: ->(city, country) { city.districts if country.main? }
+        end
+      end
+    ```
+
+  * Implemented basic named scopes
+
+## Bugfixes
+
+  * `script_score` allow options (@joeljunstrom)
+
+  * Chewy indexes eaged loading fixes (@leemhenson)
+
+  * `Chewy::Index.import nil` imports nothing instead of initial data
 
 # Version 0.6.2
 
@@ -134,13 +396,13 @@
 
 # Version 0.4.0
 
-  * Changed `update_index` matcher behavior. Now it compare array attributes position-independantly.
+  * Changed `update_index` matcher behavior. Now it compare array attributes position-independently.
 
   * Search aggregations API support (@arion).
 
   * Chewy::Query#facets called without params performs the request and returns facets.
 
-  * Added `Type.template` dsl method for root objects dynamic templates definition. See [mapping.rb](lib/chewy/type/mapping.rb) for more details.
+  * Added `Type.template` DSL method for root objects dynamic templates definition. See [mapping.rb](lib/chewy/type/mapping.rb) for more details.
 
   * ActiveRecord adapter custom `primary_key` support (@matthee).
 
@@ -279,8 +541,8 @@
 
 # Version 0.0.1
 
-  * Query dsl
+  * Query DSL
 
-  * Basic index hadling
+  * Basic index handling
 
   * Initial version

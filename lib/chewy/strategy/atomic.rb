@@ -1,6 +1,6 @@
 module Chewy
   class Strategy
-    # This strategy accomulates all the objects prepared for
+    # This strategy accumulates all the objects prepared for
     # indexing and fires index process when strategy is popped
     # from the strategies stack.
     #
@@ -16,26 +16,15 @@ module Chewy
         @stash = {}
       end
 
-      def update type, objects, options = {}
-        ActiveSupport::Deprecation.warn("`urgent: true` option is deprecated and is not effective inside `:atomic` strategy, use `Chewy.strategy(:urgent)` strategy instead") if options.key?(:urgent)
-
-        relation = (defined?(::ActiveRecord) && objects.is_a?(::ActiveRecord::Relation)) ||
-                   (defined?(::Mongoid) && objects.is_a?(::Mongoid::Criteria))
-
-        ids = if relation
-          objects.pluck(:id)
-        else
-          Array.wrap(objects).map do |object|
-            object.respond_to?(:id) ? object.id : object
-          end
-        end
+      def update(type, objects, options = {})
+        ActiveSupport::Deprecation.warn('`urgent: true` option is deprecated and is not effective inside `:atomic` strategy, use `Chewy.strategy(:urgent)` strategy instead') if options.key?(:urgent)
 
         @stash[type] ||= []
-        @stash[type] |= ids
+        @stash[type] |= type.send(:build_root).id ? Array.wrap(objects) : type.adapter.identify(objects)
       end
 
       def leave
-        @stash.all? { |type, ids| type.import(ids) }
+        @stash.all? { |type, ids| type.import!(ids) }
       end
     end
   end
