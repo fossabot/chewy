@@ -12,39 +12,40 @@ Chewy is an ODM and wrapper for [the official Elasticsearch client](https://gith
 
 ## Table of Contents
 
-* [Why Chewy?] (#why-chewy)
-* [Usage] (#usage)
-  * [Client settings] (#client-settings)
-  * [Index definition] (#index-definition)
-  * [Type default import options] (#type-default-import-options)
-  * [Multi (nested) and object field types] (#multi-nested-and-object-field-types)
-  * [Geo Point fields] (#geo-point-fields)
-  * [Crutches™ technology] (#crutches-technology)
-  * [Witchcraft™ technology] (#witchcraft-technology)
-  * [Raw Import] (#raw-import)
-  * [Journaling] (#journaling)
-  * [Types access] (#types-access)
-  * [Index manipulation] (#index-manipulation)
-  * [Index update strategies] (#index-update-strategies)
-    * [Nesting] (#nesting)
-    * [Non-block notation] (#non-block-notation)
-    * [Designing your own strategies] (#designing-your-own-strategies)
-  * [Rails application strategies integration] (#rails-application-strategies-integration)
-  * [Index querying] (#index-querying)
-  * [Additional query action.] (#additional-query-action)
-  * [Filters query DSL] (#filters-query-dsl)
-  * [Faceting] (#faceting)
-  * [Aggregations] (#aggregations)
-  * [Script fields] (#script-fields)
-  * [Script scoring] (#script-scoring)
-  * [Boost Factor] (#boost-factor)
-  * [Objects loading] (#objects-loading)
-    * [NewRelic integration] (#newrelic-integration)
-  * [Rake tasks] (#rake-tasks)
-  * [Rspec integration] (#rspec-integration)
-  * [Minitest integration] (#minitest-integration)
-* [TODO a.k.a coming soon:] (#todo-aka-coming-soon)
-* [Contributing] (#contributing)
+* [Why Chewy?](#why-chewy)
+* [Usage](#usage)
+  * [Client settings](#client-settings)
+  * [Index definition](#index-definition)
+  * [Type default import options](#type-default-import-options)
+  * [Multi (nested) and object field types](#multi-nested-and-object-field-types)
+  * [Geo Point fields](#geo-point-fields)
+  * [Crutches™ technology](#crutches-technology)
+  * [Witchcraft™ technology](#witchcraft-technology)
+  * [Raw Import](#raw-import)
+  * [Index creation during import](#index-creation-during-import)
+  * [Journaling](#journaling)
+  * [Types access](#types-access)
+  * [Index manipulation](#index-manipulation)
+  * [Index update strategies](#index-update-strategies)
+    * [Nesting](#nesting)
+    * [Non-block notation](#non-block-notation)
+    * [Designing your own strategies](#designing-your-own-strategies)
+  * [Rails application strategies integration](#rails-application-strategies-integration)
+  * [Index querying](#index-querying)
+  * [Additional query action.](#additional-query-action)
+  * [Filters query DSL](#filters-query-dsl)
+  * [Faceting](#faceting)
+  * [Aggregations](#aggregations)
+  * [Script fields](#script-fields)
+  * [Script scoring](#script-scoring)
+  * [Boost Factor](#boost-factor)
+  * [Objects loading](#objects-loading)
+    * [NewRelic integration](#newrelic-integration)
+  * [Rake tasks](#rake-tasks)
+  * [Rspec integration](#rspec-integration)
+  * [Minitest integration](#minitest-integration)
+* [TODO a.k.a coming soon](#todo-aka-coming-soon)
+* [Contributing](#contributing)
 
 ## Why Chewy?
 
@@ -481,6 +482,12 @@ end
 
 Also, you can pass `:raw_import` option to the `import` method explicitly.
 
+### Index creation during import
+
+By default, when you perform import Chewy checks whether an index exists and creates it if it's absent.
+You can turn off this feature to decrease Elasticsearch hits count.
+To do so you need to set `skip_index_creation_on_import` parameter to `false` in your `config/chewy.yml`
+
 
 ### Journaling
 
@@ -528,7 +535,7 @@ end
 
 You may be wondering why do you need it? The answer is simple: Not to lose the data.
 Imagine that:
-You reset your index in Zero Downtime manner (to separate index), and meantime somebody keeps updating the data frequently (to old index). So all these actions will be written to the journal index and you'll be able to apply them after index reset with `Chewy::Journal.apply_changes_from(Time.now - 1.hour)`.
+You reset your index in Zero Downtime manner (to separate index), and meantime somebody keeps updating the data frequently (to old index). So all these actions will be written to the journal index and you'll be able to apply them after index reset with `Chewy::Journal::Apply.since(1.hour.ago.to_i)`.
 
 For index reset journaling is turned off even if you set `journal: true` in `config/chewy.yml` or in `default_import_options`.
 You can change it only if you pass `journal: true` parameter explicitly to `#import`.

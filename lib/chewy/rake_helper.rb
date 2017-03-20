@@ -2,34 +2,31 @@ module Chewy
   module RakeHelper
     class << self
       def subscribed_task_stats
-        callback = lambda do |_name, start, finish, _id, payload|
+        import_callback = lambda do |_name, start, finish, _id, payload|
           duration = (finish - start).round(2)
           puts "  Imported #{payload[:type]} for #{duration}s, documents total: #{payload[:import].try(:[], :index).to_i}"
-          payload[:errors].each do |action, errors|
-            puts "    #{action.to_s.humanize} errors:"
-            errors.each do |error, documents|
-              puts "      `#{error}`"
-              puts "        on #{documents.count} documents: #{documents}"
+          if payload[:errors]
+            payload[:errors].each do |action, errors|
+              puts "    #{action.to_s.humanize} errors:"
+              errors.each do |error, documents|
+                puts "      `#{error}`"
+                puts "        on #{documents.count} documents: #{documents}"
+              end
             end
-          end if payload[:errors]
+          end
         end
-        ActiveSupport::Notifications.subscribed(callback, 'import_objects.chewy') do
-          yield
+        journal_callback = lambda do |_, _, _, _, payload|
+          puts "Applying journal. Stage #{payload[:stage]}"
         end
-      end
-
-      def eager_load_chewy!
-        dirs = Chewy::Railtie.all_engines.map { |engine| engine.paths[Chewy.configuration[:indices_path]] }.compact.map(&:existent).flatten.uniq
-
-        dirs.each do |dir|
-          Dir.glob(File.join(dir, '**/*.rb')).each do |file|
-            require_dependency file
+        ActiveSupport::Notifications.subscribed(journal_callback, 'apply_journal.chewy') do
+          ActiveSupport::Notifications.subscribed(import_callback, 'import_objects.chewy') do
+            yield
           end
         end
       end
 
       def all_indexes
-        eager_load_chewy!
+        Chewy.eager_load!
         Chewy::Index.descendants
       end
 
@@ -50,7 +47,7 @@ module Chewy
           index.reset!((time.to_f * 1000).round)
           if index.journal?
             Chewy::Journal.create
-            Chewy::Journal.apply_changes_from(time, only: [index])
+            Chewy::Journal::Apply.since(time, only: [index])
           end
         end
       end
