@@ -14,7 +14,7 @@ module Chewy
 
       # @return [Hash] ElasicSearch query
       def to_h
-        @query ||= { query: { filtered: filtered } }
+        @query ||= { query: { bool: filtered } }
       end
 
     private
@@ -51,7 +51,7 @@ module Chewy
       def using_query_query
         if @indices.any?
           {
-            query: range_filter,
+            must: range_filter,
             filter: {
               bool: {
                 should: @indices.collect { |i| index_filter(i) }
@@ -60,7 +60,7 @@ module Chewy
           }
         else
           {
-            query: range_filter
+            must: range_filter
           }
         end
       end

@@ -9,7 +9,7 @@ module Chewy
       #
       :query_mode,
 
-      # Default filters compilation mode. `:and` by default.
+      # Default filters compilation mode. `:must` by default.
       # See Chewy::Query#filter_mode for details
       #
       :filter_mode,
@@ -49,7 +49,7 @@ module Chewy
     def initialize
       @settings = {}
       @query_mode = :must
-      @filter_mode = :and
+      @filter_mode = :must
       @root_strategy = :base
       @request_strategy = :atomic
       @use_after_commit_callbacks = true

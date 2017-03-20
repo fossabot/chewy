@@ -148,36 +148,14 @@ module Chewy
     # Not used if only one filter for search is specified.
     # Possible values:
     #
-    # * <tt>:and</tt>
-    #   Default value. Filter compiles into an <tt>and</tt> filter.
-    #
-    #   Ex:
-    #
-    #     UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }
-    #       # => {body: {query: {filtered: {
-    #              query: {...},
-    #              filter: {and: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}
-    #            }}}}
-    #
-    # * <tt>:or</tt>
-    #   Filter compiles into an <tt>or</tt> filter.
-    #
-    #   Ex:
-    #
-    #     UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }.filter_mode(:or)
-    #       # => {body: {query: {filtered: {
-    #              query: {...},
-    #              filter: {or: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}
-    #            }}}}
-    #
     # * <tt>:must</tt>
     #   Filter compiles into a bool <tt>must</tt> filter.
     #
     #   Ex:
     #
     #     UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }.filter_mode(:must)
-    #       # => {body: {query: {filtered: {
-    #              query: {...},
+    #       # => {body: {query: {bool: {
+    #              must: {...},
     #              filter: {bool: {must: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}}
     #            }}}}
     #
@@ -187,8 +165,8 @@ module Chewy
     #   Ex:
     #
     #     UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }.filter_mode(:should)
-    #       # => {body: {query: {filtered: {
-    #              query: {...},
+    #       # => {body: {query: {bool: {
+    #              must: {...},
     #              filter: {bool: {should: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}}
     #            }}}}
     #
@@ -198,8 +176,8 @@ module Chewy
     #   Ex:
     #
     #     UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }.filter_mode('50%')
-    #       # => {body: {query: {filtered: {
-    #              query: {...},
+    #       # => {body: {query: {bool: {
+    #              must: {...},
     #              filter: {bool: {
     #                should: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}],
     #                minimum_should_match: '50%'
@@ -220,7 +198,7 @@ module Chewy
     # Note that it fallbacks by default to `Chewy.filter_mode` if
     # `Chewy.post_filter_mode` is nil.
     #
-    #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode(:and)
+    #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode(:must)
     #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode(:should)
     #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }.post_filter_mode('50%')
     #
@@ -625,7 +603,7 @@ module Chewy
     #
     #    UsersIndex.filter { name == 'Johny'}.strategy(:leap_frog)
     #     # => {body: {
-    #            query: { filtered: {
+    #            query: { bool: {
     #              filter: { term: { name: 'Johny' } },
     #              strategy: 'leap_frog'
     #            } }
@@ -666,7 +644,7 @@ module Chewy
     # While the full query compilation this array compiles
     # according to <tt>:filter_mode</tt> option value
     #
-    # By default it joins inside <tt>and</tt> filter
+    # By default it joins inside bool <tt>must</tt> filter
     # See <tt>#filter_mode</tt> chainable method for more info.
     #
     # Also this method supports block DSL.
@@ -675,17 +653,17 @@ module Chewy
     #   UsersIndex.filter(term: {name: 'Johny'}).filter(range: {age: {lte: 42}})
     #   UsersIndex::User.filter(term: {name: 'Johny'}).filter(range: {age: {lte: 42}})
     #   UsersIndex.filter{ name == 'Johny' }.filter{ age <= 42 }
-    #     # => {body: {query: {filtered: {
-    #            query: {...},
-    #            filter: {and: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}
+    #     # => {body: {query: {bool: {
+    #            must: {...},
+    #            filter: {bool: {must: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}}
     #          }}}}
     #
     # If only one filter was specified, it will become a result
     # filter as is, without joining.
     #
     #   UsersIndex.filter(term: {name: 'Johny'})
-    #     # => {body: {query: {filtered: {
-    #            query: {...},
+    #     # => {body: {query: {bool: {
+    #            must: {...},
     #            filter: {term: {name: 'Johny'}}
     #          }}}}
     #
@@ -699,7 +677,7 @@ module Chewy
     # While the full query compilation this array compiles
     # according to <tt>:post_filter_mode</tt> option value
     #
-    # By default it joins inside <tt>and</tt> filter
+    # By default it joins inside bool <tt>must</tt> filter
     # See <tt>#post_filter_mode</tt> chainable method for more info.
     #
     # Also this method supports block DSL.
@@ -709,7 +687,7 @@ module Chewy
     #   UsersIndex::User.post_filter(term: {name: 'Johny'}).post_filter(range: {age: {lte: 42}})
     #   UsersIndex.post_filter{ name == 'Johny' }.post_filter{ age <= 42 }
     #     # => {body: {
-    #            post_filter: {and: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}
+    #            post_filter: {bool: {must: [{term: {name: 'Johny'}}, {range: {age: {lte: 42}}}]}}
     #          }}
     #
     # If only one post_filter was specified, it will become a result
@@ -852,35 +830,21 @@ module Chewy
 
     # Specify types participating in the search result
     # Works via <tt>types</tt> filter. Always merged with another filters
-    # with the <tt>and</tt> filter.
+    # with the bool <tt>must</tt> filter.
     #
     #   UsersIndex.types(:admin, :manager).filters{ name == 'Johny' }.filters{ age <= 42 }
-    #     # => {body: {query: {filtered: {
-    #            query: {...},
-    #            filter: {and: [
-    #              {or: [
+    #     # => {body: {query: {bool: {
+    #            must: {...},
+    #            filter: {bool: {must: [
+    #              {bool: { should: [
     #                {type: {value: 'admin'}},
     #                {type: {value: 'manager'}}
-    #              ]},
+    #              ]}},
     #              {term: {name: 'Johny'}},
     #              {range: {age: {lte: 42}}}
-    #            ]}
+    #            ]}}
     #          }}}}
     #
-    #   UsersIndex.types(:admin, :manager).filters{ name == 'Johny' }.filters{ age <= 42 }.filter_mode(:or)
-    #     # => {body: {query: {filtered: {
-    #            query: {...},
-    #            filter: {and: [
-    #              {or: [
-    #                {type: {value: 'admin'}},
-    #                {type: {value: 'manager'}}
-    #              ]},
-    #              {or: [
-    #                {term: {name: 'Johny'}},
-    #                {range: {age: {lte: 42}}}
-    #              ]}
-    #            ]}
-    #          }}}}
     #
     def types(*params)
       chain { criteria.update_types params }
@@ -889,8 +853,8 @@ module Chewy
     # Acts the same way as <tt>types</tt>, but cleans up previously set types
     #
     #   UsersIndex.types(:admin).types!(:manager)
-    #     # => {body: {query: {filtered: {
-    #            query: {...},
+    #     # => {body: {query: {bool: {
+    #            must: {...},
     #            filter: {type: {value: 'manager'}}
     #          }}}}
     #

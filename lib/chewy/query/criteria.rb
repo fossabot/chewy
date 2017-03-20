@@ -146,7 +146,7 @@ module Chewy
         query = body.delete :query
         filter = body.delete :filter
         if query && filter
-          query = { filtered: { query: query, filter: filter } }
+          query = { bool: { must: query, filter: filter } }
           filter = nil
         end
         score = {}
@@ -170,17 +170,12 @@ module Chewy
 
       def _request_filter
         filter_mode = options[:filter_mode]
-        request_filter = if filter_mode == :and
-          filters
-        else
-          [_filters_join(filters, filter_mode)]
-        end
-
-        _filters_join([_request_types, *request_filter], :and)
+        request_filter = [_filters_join(filters, filter_mode)]
+        _filters_join([_request_types, *request_filter], :must)
       end
 
       def _request_types
-        _filters_join(types.map { |type| { type: { value: type } } }, :or)
+        _filters_join(types.map { |type| { type: { value: type } } }, :should)
       end
 
       def _request_post_filter

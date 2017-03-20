@@ -3,10 +3,6 @@ module Chewy
     module Nodes
       class Equal < Expr
         EXECUTION = {
-          :| => :or,
-          :or => :or,
-          :& => :and,
-          :and => :and,
           :b => :bool,
           :bool => :bool,
           :f => :fielddata,

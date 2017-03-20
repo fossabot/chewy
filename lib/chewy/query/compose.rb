@@ -7,18 +7,16 @@ module Chewy
         query = { match_all: {} } if !query.present? && filter.present?
 
         if filter.present?
-          filtered = if query.present?
-            { query: { filtered: {
-              query: query,
+          if query.present?
+            { query: { bool: {
+              must: query,
               filter: filter
             } } }
           else
-            { query: { filtered: {
+            { query: { bool: {
               filter: filter
             } } }
           end
-          filtered[:query][:filtered][:strategy] = options[:strategy].to_s if options[:strategy].present?
-          filtered
         elsif query.present?
           { query: query }
         else
@@ -52,8 +50,6 @@ module Chewy
 
         if filters.many? || (filters.present? && logic == :must_not)
           case logic
-          when :and, :or
-            { logic => filters }
           when :must, :should, :must_not
             { bool: { logic => filters } }
           else

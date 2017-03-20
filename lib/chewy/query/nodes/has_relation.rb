@@ -10,7 +10,7 @@ module Chewy
           @type = type.to_s
           @outer = outer
           @query_mode = :must
-          @filter_mode = :and
+          @filter_mode = :must
           @queries = []
           @filters = []
         end

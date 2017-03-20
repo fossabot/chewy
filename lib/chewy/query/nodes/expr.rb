@@ -3,11 +3,11 @@ module Chewy
     module Nodes
       class Expr < Base
         def &(other)
-          Nodes::And.new self, other
+          Nodes::Bool.new.must(self, other)
         end
 
         def |(other)
-          Nodes::Or.new self, other
+          Nodes::Bool.new.should(self, other)
         end
 
         def !

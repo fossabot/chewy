@@ -2,8 +2,6 @@ require 'chewy/query/nodes/base'
 require 'chewy/query/nodes/expr'
 require 'chewy/query/nodes/field'
 require 'chewy/query/nodes/bool'
-require 'chewy/query/nodes/and'
-require 'chewy/query/nodes/or'
 require 'chewy/query/nodes/not'
 require 'chewy/query/nodes/raw'
 require 'chewy/query/nodes/exists'
@@ -152,7 +150,7 @@ module Chewy
       #       .filter{ name: 'Peter' }
       #       .query(match: {name: 'Peter'})
       #       .filter{ age > 42 }
-      #       .filter_mode(:or)
+      #       .filter_mode(:should)
       #   end
       #
       def has_child(type) # rubocop:disable Style/PredicateName
@@ -174,7 +172,7 @@ module Chewy
       #       .filter{ name: 'Peter' }
       #       .query(match: {name: 'Peter'})
       #       .filter{ age > 42 }
-      #       .filter_mode(:or)
+      #       .filter_mode(:should)
       #   end
       #
       def has_parent(type) # rubocop:disable Style/PredicateName
