@@ -68,7 +68,7 @@ module Chewy
           indexes_hash[indexes_hash.keys.sort_by(&:length)
             .reverse.detect do |name|
               index_name.match(/#{name}(_.+|\z)/)
-            end]
+            end] || LogstashIndex
       end
 
       def indexes_hash

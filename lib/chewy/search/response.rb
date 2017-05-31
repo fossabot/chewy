@@ -68,6 +68,7 @@ module Chewy
       # @return [Array<Chewy::Type>]
       def wrappers
         @wrappers ||= hits.map do |hit|
+          hit['_source']['timestamp'] = hit['_source']['@timestamp']
           @loader.derive_type(hit['_index'], hit['_type']).build(hit)
         end
       end
