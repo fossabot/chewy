@@ -33,12 +33,13 @@ module Chewy
         settings.merge!((@proc_params.call || {}).deep_symbolize_keys) if @proc_params
 
         settings[:analysis] = resolve_analysis(settings[:analysis]) if settings[:analysis]
+
         if settings[:index] || Chewy.configuration[:index]
           settings[:index] = (Chewy.configuration[:index] || {})
             .deep_merge((settings[:index] || {}).deep_symbolize_keys)
         end
 
-        settings.present? ? { settings: settings } : {}
+        settings.present? ? {settings: settings} : {}
       end
 
     private
@@ -46,7 +47,7 @@ module Chewy
       def resolve_analysis(analysis)
         analyzer = resolve(analysis[:analyzer], Chewy.analyzers)
 
-        options = [:tokenizer, :filter, :char_filter].each.with_object({}) do |type, result|
+        options = %i[tokenizer filter char_filter].each.with_object({}) do |type, result|
           dependencies = collect_dependencies(type, analyzer)
           resolved = resolve(dependencies.push(analysis[type]), Chewy.send(type.to_s.pluralize))
           result.merge!(type => resolved) if resolved.present?
@@ -68,7 +69,7 @@ module Chewy
             else
               name_or_hash = name_or_hash.to_sym
               resolved = repository[name_or_hash]
-              resolved ? { name_or_hash => resolved } : {}
+              resolved ? {name_or_hash => resolved} : {}
             end
             result.merge!(options)
           end

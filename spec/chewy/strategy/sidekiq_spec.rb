@@ -25,7 +25,7 @@ if defined?(::Sidekiq)
     end
 
     specify do
-      Chewy.settings[:sidekiq] = { queue: 'low' }
+      Chewy.settings[:sidekiq] = {queue: 'low'}
       expect(::Sidekiq::Client).to receive(:push).with(hash_including('queue' => 'low')).and_call_original
       ::Sidekiq::Testing.inline! do
         expect { [city, other_city].map(&:save!) }
@@ -36,6 +36,12 @@ if defined?(::Sidekiq)
 
     specify do
       expect(CitiesIndex::City).to receive(:import!).with([city.id, other_city.id], suffix: '201601')
+      Chewy::Strategy::Sidekiq::Worker.new.perform('CitiesIndex::City', [city.id, other_city.id], suffix: '201601')
+    end
+
+    specify do
+      allow(Chewy).to receive(:disable_refresh_async).and_return(true)
+      expect(CitiesIndex::City).to receive(:import!).with([city.id, other_city.id], suffix: '201601', refresh: false)
       Chewy::Strategy::Sidekiq::Worker.new.perform('CitiesIndex::City', [city.id, other_city.id], suffix: '201601')
     end
   end

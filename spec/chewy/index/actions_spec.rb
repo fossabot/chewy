@@ -35,7 +35,7 @@ describe Chewy::Index::Actions do
 
       context do
         before { DummiesIndex.create '2014' }
-        specify { expect(DummiesIndex.indexes).to match_array(%w(dummies_2013 dummies_2014)) }
+        specify { expect(DummiesIndex.indexes).to match_array(%w[dummies_2013 dummies_2014]) }
       end
     end
 
@@ -55,11 +55,6 @@ describe Chewy::Index::Actions do
     context do
       before { DummiesIndex.create }
       specify do
-        skip_on_version_gte('2.0', 'format of exception changed in 2.x')
-        expect { DummiesIndex.create! }.to raise_error(Elasticsearch::Transport::Transport::Errors::BadRequest).with_message(/\[\[dummies\] already exists\]/)
-      end
-      specify do
-        skip_on_version_lt('2.0', 'format of exception was changed')
         expect { DummiesIndex.create! }.to raise_error(Elasticsearch::Transport::Transport::Errors::BadRequest).with_message(/index_already_exists_exception.*dummies/)
       end
       specify { expect { DummiesIndex.create!('2013') }.to raise_error(Elasticsearch::Transport::Transport::Errors::BadRequest).with_message(/Invalid alias name \[dummies\]/) }
@@ -72,18 +67,13 @@ describe Chewy::Index::Actions do
       specify { expect(DummiesIndex.aliases).to eq([]) }
       specify { expect(DummiesIndex.indexes).to eq(['dummies_2013']) }
       specify do
-        skip_on_version_gte('2.0', 'format of exception changed in 2.x')
-        expect { DummiesIndex.create!('2013') }.to raise_error(Elasticsearch::Transport::Transport::Errors::BadRequest).with_message(/\[\[dummies_2013\] already exists\]/)
-      end
-      specify do
-        skip_on_version_lt('2.0', 'format of exception was changed')
         expect { DummiesIndex.create!('2013') }.to raise_error(Elasticsearch::Transport::Transport::Errors::BadRequest).with_message(/index_already_exists_exception.*dummies_2013/)
       end
       specify { expect(DummiesIndex.create!('2014')['acknowledged']).to eq(true) }
 
       context do
         before { DummiesIndex.create! '2014' }
-        specify { expect(DummiesIndex.indexes).to match_array(%w(dummies_2013 dummies_2014)) }
+        specify { expect(DummiesIndex.indexes).to match_array(%w[dummies_2013 dummies_2014]) }
       end
     end
 
@@ -388,6 +378,102 @@ describe Chewy::Index::Actions do
         specify { expect(CitiesIndex.aliases).to eq([]) }
         specify { expect(CitiesIndex.indexes).to eq([]) }
         specify { expect(Chewy.client.indices.exists(index: 'cities_2013')).to eq(false) }
+      end
+    end
+
+    context 'reset_disable_refresh_interval' do
+      let(:suffix) { Time.now.to_i }
+      let(:name) { CitiesIndex.build_index_name(suffix: suffix) }
+      let(:before_import_body) do
+        {
+          index: {refresh_interval: -1}
+        }
+      end
+      let(:after_import_body) do
+        {
+          index: {refresh_interval: '1s'}
+        }
+      end
+
+      before { CitiesIndex.reset!('2013') }
+      before { allow(Chewy).to receive(:reset_disable_refresh_interval).and_return(reset_disable_refresh_interval) }
+
+      context 'activated' do
+        let(:reset_disable_refresh_interval) { true }
+        specify do
+          expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: before_import_body).once
+          expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: after_import_body).once
+          expect(CitiesIndex).to receive(:import).with(suffix: suffix, journal: false, refresh: false).and_call_original
+          expect(CitiesIndex.reset!(suffix)).to eq(true)
+        end
+
+        context 'refresh_interval already defined' do
+          before do
+            stub_index(:cities) do
+              settings index: {refresh_interval: '2s'}
+              define_type City
+            end
+          end
+
+          let(:after_import_body) do
+            {
+              index: {refresh_interval: '2s'}
+            }
+          end
+
+          specify do
+            expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: before_import_body).once
+            expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: after_import_body).once
+            expect(CitiesIndex).to receive(:import).with(suffix: suffix, journal: false, refresh: false).and_call_original
+            expect(CitiesIndex.reset!(suffix)).to eq(true)
+          end
+        end
+      end
+
+      context 'not activated' do
+        let(:reset_disable_refresh_interval) { false }
+        specify do
+          expect(CitiesIndex.client.indices).not_to receive(:put_settings)
+          expect(CitiesIndex).to receive(:import).with(suffix: suffix, journal: false, refresh: true).and_call_original
+          expect(CitiesIndex.reset!(suffix)).to eq(true)
+        end
+      end
+    end
+
+    context 'reset_no_replicas' do
+      let(:suffix) { Time.now.to_i }
+      let(:name) { CitiesIndex.build_index_name(suffix: suffix) }
+      let(:before_import_body) do
+        {
+          index: {number_of_replicas: 0}
+        }
+      end
+      let(:after_import_body) do
+        {
+          index: {number_of_replicas: 0}
+        }
+      end
+
+      before { CitiesIndex.reset!('2013') }
+      before { allow(Chewy).to receive(:reset_no_replicas).and_return(reset_no_replicas) }
+
+      context 'activated' do
+        let(:reset_no_replicas) { true }
+        specify do
+          expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: before_import_body).once
+          expect(CitiesIndex.client.indices).to receive(:put_settings).with(index: name, body: after_import_body).once
+          expect(CitiesIndex).to receive(:import).with(suffix: suffix, journal: false, refresh: true).and_call_original
+          expect(CitiesIndex.reset!(suffix)).to eq(true)
+        end
+      end
+
+      context 'not activated' do
+        let(:reset_no_replicas) { false }
+        specify do
+          expect(CitiesIndex.client.indices).not_to receive(:put_settings)
+          expect(CitiesIndex).to receive(:import).with(suffix: suffix, journal: false, refresh: true).and_call_original
+          expect(CitiesIndex.reset!(suffix)).to eq(true)
+        end
       end
     end
 

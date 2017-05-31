@@ -1,4 +1,5 @@
 # coding: utf-8
+
 lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'chewy/version'
@@ -28,11 +29,12 @@ Gem::Specification.new do |spec| # rubocop:disable BlockLength
   spec.add_development_dependency 'elasticsearch-extensions'
   spec.add_development_dependency 'resque_spec'
   spec.add_development_dependency 'timecop'
-  spec.add_development_dependency 'rubocop'
+  spec.add_development_dependency 'rubocop', '0.48.1'
 
   spec.add_development_dependency 'method_source'
   spec.add_development_dependency 'unparser'
 
   spec.add_dependency 'activesupport', '>= 4.0'
   spec.add_dependency 'elasticsearch', '>= 2.0.0'
+  spec.add_dependency 'elasticsearch-dsl'
 end

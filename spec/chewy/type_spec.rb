@@ -1,6 +1,16 @@
 require 'spec_helper'
 
 describe Chewy::Type do
+  describe '.full_name' do
+    before do
+      stub_index(:places) do
+        define_type :city
+      end
+    end
+
+    specify { expect(PlacesIndex::City.full_name).to eq('places#city') }
+  end
+
   describe '.scopes' do
     before do
       stub_index(:places) do
@@ -15,7 +25,7 @@ describe Chewy::Type do
     end
 
     specify { expect(described_class.scopes).to eq([]) }
-    specify { expect(PlacesIndex::City.scopes).to match_array([:by_rating, :by_name]) }
+    specify { expect(PlacesIndex::City.scopes).to match_array(%i[by_rating by_name]) }
     specify { expect { PlacesIndex::City.non_existing_method_call }.to raise_error(NoMethodError) }
 
     specify { expect(PlacesIndex::City._default_import_options).to eq({}) }

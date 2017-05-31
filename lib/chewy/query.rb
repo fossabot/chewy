@@ -1,6 +1,5 @@
 require 'chewy/query/criteria'
 require 'chewy/query/filters'
-require 'chewy/query/scoping'
 require 'chewy/query/loading'
 require 'chewy/query/pagination'
 
@@ -14,9 +13,18 @@ module Chewy
   #
   class Query
     include Enumerable
-    include Scoping
     include Loading
     include Pagination
+    include Chewy::Search::Scoping
+
+    DELEGATED_METHODS = %i[
+      explain query_mode filter_mode post_filter_mode
+      timeout limit offset highlight min_score rescore facets script_score
+      boost_factor weight random_score field_value_factor decay aggregations
+      suggest none strategy query filter post_filter boost_mode
+      score_mode order reorder only types delete_all find total
+      total_count total_entries unlimited script_fields track_scores preference
+    ].to_set.freeze
 
     delegate :each, :count, :size, to: :_collection
     alias_method :to_ary, :to_a
@@ -374,7 +382,7 @@ module Chewy
     #                  }]
     #                } } }
     def script_score(script, options = {})
-      scoring = { script_score: { script: script }.merge(options) }
+      scoring = {script_score: {script: script}.merge(options)}
       chain { criteria.update_scores scoring }
     end
 
@@ -442,7 +450,7 @@ module Chewy
     #                  }]
     #                } } }
     def random_score(seed = Time.now, options = {})
-      scoring = options.merge(random_score: { seed: seed.to_i })
+      scoring = options.merge(random_score: {seed: seed.to_i})
       chain { criteria.update_scores scoring }
     end
 
@@ -511,8 +519,8 @@ module Chewy
     def decay(function, field, options = {})
       field_options = options.extract!(:origin, :scale, :offset, :decay).delete_if { |_, v| v.nil? }
       scoring = options.merge(function => {
-                                field => field_options
-                              })
+        field => field_options
+      })
       chain { criteria.update_scores scoring }
     end
 
@@ -541,8 +549,8 @@ module Chewy
       @_named_aggs ||= _build_named_aggs
       @_fully_qualified_named_aggs ||= _build_fqn_aggs
       if params
-        params = { params => @_named_aggs[params] } if params.is_a?(Symbol)
-        params = { params => _get_fully_qualified_named_agg(params) } if params.is_a?(String) && params =~ /\A\S+#\S+\.\S+\z/
+        params = {params => @_named_aggs[params]} if params.is_a?(Symbol)
+        params = {params => _get_fully_qualified_named_agg(params)} if params.is_a?(String) && params =~ /\A\S+#\S+\.\S+\z/
         chain { criteria.update_aggregations params }
       else
         _response['aggregations'] || {}
@@ -933,17 +941,28 @@ module Chewy
     #   UsersIndex::User.filter{ age <= 42 }.delete_all
     #
     def delete_all
-      if Runtime.version > '2.0'
+      if Runtime.version >= '2.0'
         plugins = Chewy.client.nodes.info(plugins: true)['nodes'].values.map { |item| item['plugins'] }.flatten
         raise PluginMissing, 'install delete-by-query plugin' unless plugins.find { |item| item['name'] == 'delete-by-query' }
       end
+
       request = chain { criteria.update_options simple: true }.send(:_request)
+
       ActiveSupport::Notifications.instrument 'delete_query.chewy',
         request: request, indexes: _indexes, types: _types,
         index: _indexes.one? ? _indexes.first : _indexes,
         type: _types.one? ? _types.first : _types do
-        Chewy.client.delete_by_query(request)
-      end
+          if Runtime.version >= '2.0'
+            path = Elasticsearch::API::Utils.__pathify(
+              Elasticsearch::API::Utils.__listify(request[:index]),
+              Elasticsearch::API::Utils.__listify(request[:type]),
+              '/_query'
+            )
+            Chewy.client.perform_request(Elasticsearch::API::HTTP_DELETE, path, {}, request[:body]).body
+          else
+            Chewy.client.delete_by_query(request)
+          end
+        end
     end
 
     # Find all records matching a query.
@@ -1027,8 +1046,8 @@ module Chewy
 
   protected
 
-    def initialize_clone(other)
-      @criteria = other.criteria.clone
+    def initialize_clone(origin)
+      @criteria = origin.criteria.clone
       reset
     end
 
@@ -1067,20 +1086,7 @@ module Chewy
 
     def _results
       @_results ||= (criteria.none? || _response == {} ? [] : _response['hits']['hits']).map do |hit|
-        attributes = (hit['_source'] || {})
-          .reverse_merge(id: hit['_id'])
-          .merge!(_score: hit['_score'])
-          .merge!(_explanation: hit['_explanation'])
-
-        attributes[:timestamp] = attributes.delete '@timestamp' rescue nil
-
-        if _derive_index(hit['_index'])
-          wrapper = _derive_index(hit['_index']).type(hit['_type']).new(attributes)
-        else
-          wrapper = LogstashIndex.type_hash[hit['_type']].new attributes
-        end
-        wrapper._data = hit
-        wrapper
+        _derive_type(hit['_index'], hit['_type']).build(hit)
       end
     end
 
@@ -1095,9 +1101,14 @@ module Chewy
       end
     end
 
+    def _derive_type(index, type)
+      (@types_cache ||= {})[[index, type]] ||= _derive_index(index).type(type)
+    end
+
     def _derive_index(index_name)
       (@derive_index ||= {})[index_name] ||= _indexes_hash[index_name] ||
-        _indexes_hash[_indexes_hash.keys.sort_by(&:length).reverse.detect { |name| index_name.start_with?(name) }]
+        _indexes_hash[_indexes_hash.keys.sort_by(&:length).reverse.detect { |name| index_name.start_with?(name) }] ||
+        LogstashIndex
     end
 
     def _indexes_hash

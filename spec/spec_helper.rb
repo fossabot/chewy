@@ -14,7 +14,7 @@ require 'rspec/collection_matchers'
 
 require 'timecop'
 
-Kaminari::Hooks.init if defined?(::Kaminari)
+Kaminari::Hooks.init if defined?(::Kaminari::Hooks)
 
 require 'support/fail_helpers'
 require 'support/class_helpers'
@@ -48,7 +48,7 @@ elsif defined?(::Sequel)
   require 'support/sequel'
 else
   RSpec.configure do |config|
-    [:orm, :mongoid, :active_record, :sequel].each do |group|
+    %i[orm mongoid active_record sequel].each do |group|
       config.filter_run_excluding(group)
     end
   end

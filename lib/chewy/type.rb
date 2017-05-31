@@ -13,7 +13,7 @@ require 'chewy/type/adapter/sequel'
 
 module Chewy
   class Type
-    IMPORT_OPTIONS_KEYS = [:batch_size, :bulk_size, :refresh, :consistency, :replication, :raw_import, :journal].freeze
+    IMPORT_OPTIONS_KEYS = %i[batch_size bulk_size refresh consistency replication raw_import journal].freeze
 
     include Search
     include Mapping
@@ -47,6 +47,12 @@ module Chewy
       #
       def type_name
         adapter.type_name
+      end
+
+      # Returns index and type names as a string identifier
+      #
+      def full_name
+        @full_name ||= [index_name, type_name].join('#')
       end
 
       # Returns list of public class methods defined in current type
