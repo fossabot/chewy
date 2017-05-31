@@ -27,7 +27,7 @@ module Chewy
         load script_fields suggest aggs aggregations none
         indices_boost rescore highlight total total_count
         total_entries types delete_all count exists? exist? find
-        scroll_batches scroll_hits scroll_results scroll_wrappers
+        scroll_batches scroll_hits scroll_results scroll_wrappers index_name
       ].to_set.freeze
       DEFAULT_BATCH_SIZE = 1000
       DEFAULT_SCROLL = '1m'.freeze
@@ -92,6 +92,14 @@ module Chewy
       # @return [Array<Chewy::Type>, Array<Object, nil>] wrappers or records collection
       def to_a
         parameters[:as].value == 'records' ? records : wrappers
+      end
+
+      def index_name(name)
+        chain do
+          @_indexes.each do |index|
+            index.index_name name
+          end
+        end
       end
 
       # Access to ES response wrappers providing useful methods such as
