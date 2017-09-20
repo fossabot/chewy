@@ -2,6 +2,7 @@ require 'spec_helper'
 
 describe Chewy::Type::Adapter::Object do
   before { stub_class(:product) }
+  subject { described_class.new(:product) }
 
   describe '#name' do
     specify { expect(described_class.new('product').name).to eq('Product') }
@@ -121,33 +122,107 @@ describe Chewy::Type::Adapter::Object do
     end
   end
 
-  describe '#load' do
-    context do
-      subject { described_class.new('product') }
-      let(:objects) { Array.new(3) { double } }
+  describe '#import_fields' do
+    let!(:objects) { Array.new(3) { |i| double(id: i + 1, name: "Name#{i}") } }
+    let!(:hashes) { Array.new(3) { |i| {id: i + 1, 'name' => "Name#{i}"} } }
 
-      specify { expect(subject.load(objects)).to be_nil }
+    context do
+      subject { described_class.new(-> { objects }) }
+      specify { expect(subject.import_fields).to match([[1, 2, 3]]) }
+      specify { expect(subject.import_fields(fields: [:name])).to match([[[1, 'Name0'], [2, 'Name1'], [3, 'Name2']]]) }
+    end
+
+    context do
+      subject { described_class.new(-> { objects }) }
+      specify { expect(subject.import_fields(batch_size: 2)).to match([[1, 2], [3]]) }
+      specify { expect(subject.import_fields(fields: [:name], batch_size: 2)).to match([[[1, 'Name0'], [2, 'Name1']], [[3, 'Name2']]]) }
+    end
+
+    context do
+      subject { described_class.new(-> { objects }) }
+      specify { expect(subject.import_fields(objects.first(2))).to match([[1, 2]]) }
+      specify { expect(subject.import_fields(objects.first(2), fields: [:name])).to match([[[1, 'Name0'], [2, 'Name1']]]) }
+    end
+
+    context do
+      subject { described_class.new(-> { hashes }) }
+      specify { expect(subject.import_fields).to match([[1, 2, 3]]) }
+      specify { expect(subject.import_fields(fields: [:name])).to match([[[1, 'Name0'], [2, 'Name1'], [3, 'Name2']]]) }
+    end
+
+    context do
+      subject { described_class.new(-> { [1, 2, 3] }) }
+      specify { expect(subject.import_fields).to match([[1, 2, 3]]) }
+      specify { expect(subject.import_fields(fields: [:name])).to match([[[1, nil], [2, nil], [3, nil]]]) }
     end
 
     context do
       before do
-        allow(Product).to receive(:load_one) { |object|
-                            allow(object).to receive_messages(wrapped?: true)
-                            object
-                          }
+        stub_class(:product) do
+          def self.pluck(*fields)
+            if fields == [:id]
+              [1, 2, 3]
+            elsif fields.size > 1
+              [4, 5, 6]
+            end
+          end
+        end
       end
-      subject { described_class.new(Product) }
-      let(:objects) { Array.new(3) { double(wrapped?: false) } }
 
-      specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:wrapped?) } }
+      context do
+        subject { described_class.new(Product) }
+        specify { expect(subject.import_fields).to match([[1, 2, 3]]) }
+        specify { expect(subject.import_fields(fields: [:name])).to match([[4, 5, 6]]) }
+      end
+
+      context do
+        subject { described_class.new(Product) }
+        specify { expect(subject.import_fields(objects.first(2))).to match([[1, 2]]) }
+        specify { expect(subject.import_fields(objects.first(2), fields: [:name])).to match([[[1, 'Name0'], [2, 'Name1']]]) }
+      end
+
+      context 'batch_size' do
+        subject { described_class.new(Product) }
+        specify { expect(subject.import_fields(batch_size: 2)).to match([[1, 2], [3]]) }
+        specify { expect(subject.import_fields(fields: [:name], batch_size: 2)).to match([[4, 5], [6]]) }
+      end
+    end
+  end
+
+  describe '#import_references' do
+    let!(:objects) { Array.new(3) { |i| double(id: i + 1, name: "Name#{i}") } }
+
+    subject { described_class.new(-> { objects }) }
+    specify { expect(subject.import_references).to match([objects]) }
+    specify { expect(subject.import_references(batch_size: 2)).to match([objects.first(2), objects.last(1)]) }
+    specify { expect(subject.import_references(objects.first(2))).to match([objects.first(2)]) }
+    specify { expect(subject.import_references(objects.first(2), batch_size: 1)).to match([objects.first(1), [objects[1]]]) }
+  end
+
+  describe '#load' do
+    subject { described_class.new(Product) }
+    let(:objects) { (1..3).to_a }
+
+    specify { expect(subject.load(objects)).to be_nil }
+
+    context do
+      before { allow(Product).to receive(:load_all) { |objects| objects.map { |i| i * 3 } } }
+      specify { expect(subject.load(objects, value: 42)).to eq([3, 6, 9]) }
     end
 
     context do
-      before { allow(Product).to receive(:load_one) { |_object| nil } }
-      subject { described_class.new(Product) }
-      let(:objects) { Array.new(3) { double(wrapped?: false) } }
+      before { allow(Product).to receive(:load_all) { |objects, options| objects.map { |i| i * options[:value] } } }
+      specify { expect(subject.load(objects, value: 2)).to eq([2, 4, 6]) }
+    end
 
-      specify { expect(subject.load(objects)).to satisfy { |objects| objects.all?(&:nil?) } }
+    context do
+      before { allow(Product).to receive(:load_one) { |object| object + 2 } }
+      specify { expect(subject.load(objects)).to eq((3..5).to_a) }
+    end
+
+    context do
+      before { allow(Product).to receive(:load_one) { |object, options| object + options[:value] } }
+      specify { expect(subject.load(objects, value: 42)).to eq((43..45).to_a) }
     end
   end
 end

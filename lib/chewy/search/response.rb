@@ -6,9 +6,10 @@ module Chewy
     class Response
       # @param body [Hash] response body hash
       # @param loader [Chewy::Search::Loader] loader instance
-      def initialize(body, loader)
+      def initialize(body, loader, paginator = nil)
         @body = body
         @loader = loader
+        @paginator = paginator
       end
 
       # Raw response `hits` collection. Returns empty array is something went wrong.
@@ -73,32 +74,41 @@ module Chewy
         end
       end
 
-      # ORM/ODM records/documents that had been a source for Chewy import
+      # ORM/ODM objects that had been a source for Chewy import
       # and now loaded from the DB using hits ids. Uses
       # {Chewy::Search::Request#load} passed options for loading.
       #
       # @see Chewy::Search::Request#load
       # @see Chewy::Search::Loader
       # @return [Array<Object>]
-      def records
-        @records ||= @loader.load(hits)
+      def objects
+        @objects ||= begin
+          objects = @loader.load(hits)
+          if @paginator
+            @paginator.call(objects)
+          else
+            objects
+          end
+        end
       end
-      alias_method :documents, :records
+      alias_method :records, :objects
+      alias_method :documents, :objects
 
       # This method is used in cases when you need to iterate through
       # both of the collections simultaneously.
       #
       # @example
       #   scope.each do |wrapper|
-      #     scope.record_hash[wrapper]
+      #     scope.object_hash[wrapper]
       #   end
       # @see #wrappers
-      # @see #records
+      # @see #objects
       # @return [{Chewy::Type => Object}] a hash with wrappers as keys and ORM/ODM objects as values
-      def record_hash
-        @record_hash ||= wrappers.zip(records).to_h
+      def object_hash
+        @object_hash ||= wrappers.zip(objects).to_h
       end
-      alias_method :document_hash, :record_hash
+      alias_method :record_hash, :object_hash
+      alias_method :document_hash, :object_hash
 
     private
 

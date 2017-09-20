@@ -26,6 +26,8 @@ module Chewy
       end
 
       def ==(other)
+        return true if super
+
         if other.is_a?(Chewy::Type)
           self.class == other.class && (respond_to?(:id) ? id == other.id : attributes == other.attributes)
         elsif other.respond_to?(:id)
@@ -34,6 +36,12 @@ module Chewy
             id.to_s == other.id.to_s
         else
           false
+        end
+      end
+
+      %w[_id _type _index].each do |name|
+        define_method name do
+          data[name]
         end
       end
 
@@ -66,7 +74,7 @@ module Chewy
       end
 
       def highlight(attribute)
-        _data['highlight'][attribute].first
+        _data['highlight'][attribute].first if highlight?(attribute)
       end
 
       def highlight?(attribute)

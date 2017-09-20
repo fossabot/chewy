@@ -18,7 +18,7 @@ module Chewy
       include Scoping
       include Scrolling
       UNDEFINED = Class.new.freeze
-      PLUCK_MAPPING = {'index' => '_index', 'type' => '_type', 'id' => '_id'}.freeze
+      EVERFIELDS = %w[_index _type _id _parent].freeze
       DELEGATED_METHODS = %i[
         query filter post_filter order reorder docvalue_fields
         track_scores request_cache explain version profile
@@ -26,15 +26,27 @@ module Chewy
         timeout min_score source stored_fields search_after
         load script_fields suggest aggs aggregations none
         indices_boost rescore highlight total total_count
-        total_entries types delete_all count exists? exist? find
+        total_entries types delete_all count exists? exist? find pluck
         scroll_batches scroll_hits scroll_results scroll_wrappers index_name
       ].to_set.freeze
       DEFAULT_BATCH_SIZE = 1000
+      DEFAULT_PLUCK_BATCH_SIZE = 10_000
       DEFAULT_SCROLL = '1m'.freeze
+      # An array of storage names that are modifying returned fields in hits
+      FIELD_STORAGES = %i[
+        source docvalue_fields script_fields stored_fields
+      ].freeze
+      # An array of storage names that are not related to hits at all.
+      EXTRA_STORAGES = %i[aggs suggest].freeze
+      # An array of storage names that are changing the returned hist collection in any way.
+      WHERE_STORAGES = %i[
+        query filter post_filter none types min_score rescore indices_boost
+      ].freeze
 
-      delegate :hits, :wrappers, :records, :documents, :record_hash, :document_hash,
+      delegate :hits, :wrappers, :objects, :records, :documents,
+        :object_hash, :record_hash, :document_hash,
         :total, :max_score, :took, :timed_out?, to: :response
-      delegate :each, :size, to: :to_a
+      delegate :each, :size, :to_a, :[], to: :wrappers
       alias_method :to_ary, :to_a
       alias_method :total_count, :total
       alias_method :total_entries, :total
@@ -73,7 +85,7 @@ module Chewy
       # @example
       #   PlacesIndex.limit(10) == PlacesIndex.limit(10) # => true
       #   PlacesIndex.limit(10) == PlacesIndex.limit(10).to_a # => true
-      #   PlacesIndex.limit(10) == PlacesIndex.limit(10).records # => true
+      #   PlacesIndex.limit(10) == PlacesIndex.limit(10).objects # => true
       #
       #   PlacesIndex.limit(10) == UsersIndex.limit(10) # => false
       #   PlacesIndex.limit(10) == UsersIndex.limit(10).to_a # => false
@@ -82,16 +94,7 @@ module Chewy
       # @param other [Object] any object
       # @return [true, false] the result of comparison
       def ==(other)
-        super || other.is_a?(Chewy::Search::Request) ? compare_internals(other) : wrappers == other
-      end
-
-      # The method result depends on the scope `:as` parameter value.
-      #
-      # @see Chewy::Search::Response#wrappers
-      # @see Chewy::Search::Response#records
-      # @return [Array<Chewy::Type>, Array<Object, nil>] wrappers or records collection
-      def to_a
-        parameters[:as].value == 'records' ? records : wrappers
+        super || other.is_a?(Chewy::Search::Request) ? compare_internals(other) : to_a == other
       end
 
       def index_name(name)
@@ -108,7 +111,7 @@ module Chewy
       # @see Chewy::Search::Response
       # @return [Chewy::Search::Response] a response object instance
       def response
-        @response ||= Response.new(perform, loader)
+        @response ||= Response.new(perform, loader, collection_paginator)
       end
 
       # ES request body
@@ -389,27 +392,6 @@ module Chewy
         end
       end
 
-      # @!method as_records
-      #   Switches the scope to the ORM/ODM objects collection mode.
-      #   It is still possible to access both collections via {#response}.
-      #
-      #   @see #to_a
-      #   @see Chewy::Search::Parameters::As
-      #   @return [Chewy::Search::Request]
-      #
-      # @!method as_wrappers
-      #   Switches the scope back to the wrappers collection mode.
-      #   It is still possible to access both collections via {#response}.
-      #
-      #   @see #to_a
-      #   @see Chewy::Search::Parameters::As
-      #   @return [Chewy::Search::Request]
-      %i[records wrappers].each do |value|
-        define_method "as_#{value}" do
-          modify(:as) { replace!(value) }
-        end
-      end
-
       # @!method request_cache(value)
       #   Replaces the value of the `request_cache` parameter with the provided value.
       #   Unlike other boolean fields, the value have to be specified explicitly
@@ -555,7 +537,7 @@ module Chewy
         modify(:search_after) { replace!(values.empty? ? value : [value, *values]) }
       end
 
-      # Stores ORM/ODM records/documents loading options. Options
+      # Stores ORM/ODM objects loading options. Options
       # might be define per-type or be global, depends on the adapter
       # loading implementation. Also, there are 2 loading options to select
       # or exclude types from loading: `only` and `except` respectively.
@@ -564,8 +546,8 @@ module Chewy
       # @example
       #   PlaceIndex.load(only: 'city').load(scope: -> { active })
       # @see Chewy::Search::Loader
-      # @see Chewy::Search::Response#records
-      # @see Chewy::Search::Scrolling#scroll_records
+      # @see Chewy::Search::Response#objects
+      # @see Chewy::Search::Scrolling#scroll_objects
       # @param options [Hash] adapter-specific loading options
       def load(options = nil)
         modify(:load) { update!(options) }
@@ -810,8 +792,10 @@ module Chewy
         if performed?
           total
         else
-          @count ||= Chewy.client.count(render_simple)['count']
+          Chewy.client.count(only(WHERE_STORAGES).render)['count']
         end
+      rescue Elasticsearch::Transport::Transport::Errors::NotFound
+        0
       end
 
       # Checks if any of the document exist for this request. If
@@ -827,6 +811,33 @@ module Chewy
         end
       end
       alias_method :exist?, :exists?
+
+      # Return first wrapper object or a collection of first N wrapper
+      # objects if the argument is provided.
+      # Tries to use cached results of possible. If the amount of
+      # cached results is insufficient - performs a new request.
+      #
+      # @overload first
+      #   If nothing is passed - it returns a single object.
+      #
+      #   @return [Chewy::Type] result document
+      #
+      # @overload first(limit)
+      #   If limit is provided - it returns the limit amount or less
+      #   of wrapper objects.
+      #
+      #   @param limit [Integer] amount of requested results
+      #   @return [Array<Chewy::Type>] result document collection
+      def first(limit = UNDEFINED)
+        request_limit = limit == UNDEFINED ? 1 : limit
+
+        if performed? && (request_limit <= size || size == total)
+          limit == UNDEFINED ? wrappers.first : wrappers.first(limit)
+        else
+          result = except(EXTRA_STORAGES).limit(request_limit).to_a
+          limit == UNDEFINED ? result.first : result
+        end
+      end
 
       # Finds documents with specified ids for the current request scope.
       #
@@ -845,8 +856,10 @@ module Chewy
       #   @param ids [Array<Integer, String>] ids of the desired documents
       #   @return [Array<Chewy::Type>] result documents
       def find(*ids)
+        return super if block_given?
+
         ids = ids.flatten(1).map(&:to_s)
-        scope = only(:query, :filter, :post_filter).filter(ids: {values: ids})
+        scope = except(EXTRA_STORAGES).filter(ids: {values: ids})
 
         results = if ids.size > DEFAULT_BATCH_SIZE
           scope.scroll_wrappers
@@ -854,12 +867,16 @@ module Chewy
           scope.limit(ids.size)
         end.to_a
 
-        missing_ids = ids - results.map(&:id).map(&:to_s)
-        raise Chewy::DocumentNotFound, "Could not find documents for ids: #{missing_ids.to_sentence}" if missing_ids.present?
+        if ids.size != results.size
+          missing_ids = ids - results.map(&:id).map(&:to_s)
+          raise Chewy::DocumentNotFound, "Could not find documents for ids: #{missing_ids.to_sentence}"
+        end
         results.one? ? results.first : results
       end
 
       # Returns and array of values for specified fields.
+      # Uses `source` to restrict the list of returned fields.
+      # Fields `_id`, `_type` and `_index` are also supported.
       #
       # @overload pluck(field)
       #   If single field is passed - it returns and array of values.
@@ -873,14 +890,14 @@ module Chewy
       #   @param fields [Array<String, Symbol>] field names
       #   @return [Array<Array<Object>>] specified field values
       def pluck(*fields)
-        fields = fields.flatten(1).reject(&:blank?).map(&:to_s).map do |field|
-          PLUCK_MAPPING[field] || field
-        end
+        fields = fields.flatten(1).reject(&:blank?).map(&:to_s)
 
-        scope = except(:source, :stored_fields, :script_fields, :docvalue_fields)
-          .source(fields - PLUCK_MAPPING.values)
+        source_fields = fields - EVERFIELDS
+        scope = except(FIELD_STORAGES, EXTRA_STORAGES)
+          .source(source_fields.presence || false)
 
-        scope.hits.map do |hit|
+        hits = raw_limit_value ? scope.hits : scope.scroll_hits(batch_size: DEFAULT_PLUCK_BATCH_SIZE)
+        hits.map do |hit|
           if fields.one?
             fetch_field(hit, fields.first)
           else
@@ -898,16 +915,18 @@ module Chewy
       # @see https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-delete-by-query.html
       # @see https://www.elastic.co/guide/en/elasticsearch/plugins/2.0/plugins-delete-by-query.html
       # @note The result hash is different for different API used.
+      # @param refresh [true, false] field names
       # @return [Hash] the result of query execution
-      def delete_all
+      def delete_all(refresh: true)
+        request_body = only(WHERE_STORAGES).render.merge(refresh: refresh)
         ActiveSupport::Notifications.instrument 'delete_query.chewy',
-          request: render_simple, indexes: _indexes, types: _types,
+          request: request_body, indexes: _indexes, types: _types,
           index: _indexes.one? ? _indexes.first : _indexes,
           type: _types.one? ? _types.first : _types do
             if Runtime.version < '5.0'
-              delete_by_query_plugin(render_simple)
+              delete_by_query_plugin(request_body)
             else
-              Chewy.client.delete_by_query(render_simple)
+              Chewy.client.delete_by_query(request_body)
             end
           end
       end
@@ -922,8 +941,8 @@ module Chewy
     private
 
       def compare_internals(other)
-        _indexes.map(&:index_name).sort == other._indexes.map(&:index_name).sort &&
-          _types.map(&:full_name).sort == other._types.map(&:full_name).sort &&
+        _indexes.sort_by(&:derivable_name) == other._indexes.sort_by(&:derivable_name) &&
+          _types.sort_by(&:derivable_name) == other._types.sort_by(&:derivable_name) &&
           parameters == other.parameters
       end
 
@@ -936,17 +955,21 @@ module Chewy
       end
 
       def reset
-        @response, @count, @render, @render_base, @render_simple, @type_names, @index_names = nil
+        @response, @render, @render_base, @type_names, @index_names, @loader = nil
       end
 
       def perform(additional = {})
-        if parameters[:none].value
-          {}
-        else
-          Chewy.client.search(render.merge(additional))
+        request_body = render.merge(additional)
+        ActiveSupport::Notifications.instrument 'search_query.chewy',
+          request: request_body, indexes: _indexes, types: _types,
+          index: _indexes.one? ? _indexes.first : _indexes,
+          type: _types.one? ? _types.first : _types do
+          begin
+            Chewy.client.search(request_body)
+          rescue Elasticsearch::Transport::Transport::Errors::NotFound
+            {}
+          end
         end
-      rescue Elasticsearch::Transport::Transport::Errors::NotFound
-        {}
       end
 
       def raw_limit_value
@@ -970,11 +993,7 @@ module Chewy
       end
 
       def render_base
-        @render_base ||= {index: index_names, type: type_names}
-      end
-
-      def render_simple
-        @render_simple ||= render_base.merge(body: parameters.render_query || {})
+        @render_base ||= {index: index_names, type: type_names, body: {}}
       end
 
       def delete_by_query_plugin(request)
@@ -991,7 +1010,7 @@ module Chewy
       end
 
       def fetch_field(hit, field)
-        if PLUCK_MAPPING.values.include?(field)
+        if EVERFIELDS.include?(field)
           hit[field]
         else
           hit.fetch('_source', {})[field]
@@ -999,7 +1018,11 @@ module Chewy
       end
 
       def performed?
-        instance_variable_defined?(:@response)
+        !@response.nil?
+      end
+
+      def collection_paginator
+        method(:paginated_collection).to_proc if respond_to?(:paginated_collection, true)
       end
     end
   end

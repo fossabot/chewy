@@ -20,6 +20,7 @@ Chewy is an ODM and wrapper for [the official Elasticsearch client](https://gith
   * [Index definition](#index-definition)
   * [Type default import options](#type-default-import-options)
   * [Multi (nested) and object field types](#multi-nested-and-object-field-types)
+  * [Parent and children types](#parent-and-children-types)
   * [Geo Point fields](#geo-point-fields)
   * [Crutches™ technology](#crutches-technology)
   * [Witchcraft™ technology](#witchcraft-technology)
@@ -40,9 +41,16 @@ Chewy is an ODM and wrapper for [the official Elasticsearch client](https://gith
     * [Pagination](#pagination)
     * [Named scopes](#named-scopes)
     * [Scroll API](#scroll-api)
-    * [Loading records](#loading-records)
+    * [Loading objects](#loading-objects)
     * [Legacy DSL incompatibilities](#legacy-dsl-incompatibilities)
   * [Rake tasks](#rake-tasks)
+    * [chewy:reset](#chewyreset)
+    * [chewy:upgrade](#chewyupgrade)
+    * [chewy:update](#chewyupdate)
+    * [chewy:sync](#chewysync)
+    * [chewy:deploy](#chewydeploy)
+    * [Parallelizing rake tasks](#parallelizing-rake-tasks)
+    * [chewy:journal](#chewyjournal)
   * [Rspec integration](#rspec-integration)
   * [Minitest integration](#minitest-integration)
 * [TODO a.k.a coming soon](#todo-aka-coming-soon)
@@ -220,7 +228,7 @@ If you would like to use AWS's ElasticSearch using an IAM user policy, you will 
   ```
 
   [See index settings here](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-update-settings.html).
-  [See root object settings here](https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-root-object-type.html).
+  [See root object settings here](https://www.elastic.co/guide/en/elasticsearch/reference/current/dynamic-field-mapping.html).
 
   See [mapping.rb](lib/chewy/type/mapping.rb) for more details.
 
@@ -333,11 +341,23 @@ field :full_name, type: 'string', value: ->{ full_name.strip } do
 end
 ```
 
-The `value:` option for internal fields would no longer be effective.
+The `value:` option for internal fields will no longer be effective.
 
+### Parent and children types
+
+To define [parent](https://www.elastic.co/guide/en/elasticsearch/guide/current/parent-child-mapping.html) type for a given index_type, you can include root options for the type where you can specify parent_type and parent_id
+
+```ruby
+define_type User.includes(:account) do
+  root parent: 'account', parent_id: ->{ account_id } do
+    field :created_at, type: 'date'
+    field :task_id, type: 'integer'
+  end
+end
+```
 ### Geo Point fields
 
-You can use [Elasticsearch's geo mapping](https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-geo-point-type.html) with the `geo_point` field type, allowing you to query, filter and order by latitude and longitude. You can use the following hash format:
+You can use [Elasticsearch's geo mapping](https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-point.html) with the `geo_point` field type, allowing you to query, filter and order by latitude and longitude. You can use the following hash format:
 
 ```ruby
 field :coordinates, type: 'geo_point', value: ->{ {lat: latitude, lon: longitude} }
@@ -367,7 +387,7 @@ class ProductsIndex < Chewy::Index
 end
 ```
 
-Then the Chewy reindexing flow would look like the following pseudo-code (even in Mongoid):
+Then the Chewy reindexing flow will look like the following pseudo-code (even in Mongoid):
 
 ```ruby
 Product.includes(:categories).find_in_batches(1000) do |batch|
@@ -402,7 +422,7 @@ class ProductsIndex < Chewy::Index
 end
 ```
 
-An example flow would look like this:
+An example flow will look like this:
 
 ```ruby
 Product.includes(:categories).find_in_batches(1000) do |batch|
@@ -513,8 +533,8 @@ To do so you need to set `skip_index_creation_on_import` parameter to `false` in
 ### Journaling
 
 You can record all actions that were made to the separate journal index in ElasticSearch.
-When you create/update/destroy your records, it will be saved in this special index.
-If you make something with a batch of records (e.g. during index reset) it will be saved as a one record, including primary keys of each document that was affected.
+When you create/update/destroy your documents, it will be saved in this special index.
+If you make something with a batch of documents (e.g. during index reset) it will be saved as a one record, including primary keys of each document that was affected.
 Common journal record looks like this:
 
 ```json
@@ -554,12 +574,9 @@ class CityIndex
 end
 ```
 
-You may be wondering why do you need it? The answer is simple: Not to lose the data.
-Imagine that:
-You reset your index in Zero Downtime manner (to separate index), and meantime somebody keeps updating the data frequently (to old index). So all these actions will be written to the journal index and you'll be able to apply them after index reset with `Chewy::Journal::Apply.since(1.hour.ago.to_i)`.
+You may be wondering why do you need it? The answer is simple: not to lose the data.
 
-For index reset journaling is turned off even if you set `journal: true` in `config/chewy.yml` or in `default_import_options`.
-You can change it only if you pass `journal: true` parameter explicitly to `#import`.
+Imagine that you reset your index in a zero-downtime manner (to separate index), and at the meantime somebody keeps updating the data frequently (to old index). So all these actions will be written to the journal index and you'll be able to apply them after index reset using the `Chewy::Journal` interface.
 
 ### Types access
 
@@ -591,6 +608,7 @@ UsersIndex::User.import # import with 0 arguments process all the data specified
 UsersIndex::User.import User.where('rating > 100') # or import specified users scope
 UsersIndex::User.import User.where('rating > 100').to_a # or import specified users array
 UsersIndex::User.import [1, 2, 42] # pass even ids for import, it will be handled in the most effective way
+UsersIndex::User.import User.where('rating > 100'), update_fields: [:email] # if update fields are specified - it will update their values only with the `update` bulk action.
 
 UsersIndex.import # import every defined type
 UsersIndex.import user: User.where('rating > 100') # import only active users to `user` type.
@@ -670,6 +688,16 @@ Chewy.strategy(:active_job) do
 end
 ```
 
+#### `:shoryuken`
+
+This does the same thing as `:atomic`, but asynchronously using shoryuken. Patch `Chewy::Strategy::Shoryuken::Worker` for index updates improving.
+
+```ruby
+Chewy.strategy(:shoryuken) do
+  City.popular.map(&:do_some_update_action!)
+end
+```
+
 #### `:urgent`
 
 The following strategy is convenient if you are going to update documents in your index one by one.
@@ -680,7 +708,7 @@ Chewy.strategy(:urgent) do
 end
 ```
 
-This code would perform `City.popular.count` requests for ES documents update.
+This code will perform `City.popular.count` requests for ES documents update.
 
 It is convenient for use in e.g. the Rails console with non-block notation:
 
@@ -854,36 +882,27 @@ See [Chewy::Search::Scoping](lib/chewy/search/scoping.rb) for details.
 
 #### Scroll API
 
-ElasticSearch scroll API is utilized by a bunch of methods: `scroll_batches`, `scroll_hits`, `scroll_wrappers` and `scroll_records`.
+ElasticSearch scroll API is utilized by a bunch of methods: `scroll_batches`, `scroll_hits`, `scroll_wrappers` and `scroll_objects`.
 
 See [Chewy::Search::Scrolling](lib/chewy/search/scrolling.rb) for details.
 
-#### Loading records
+#### Loading objects
 
-It is possible to load ORM/ODM source records/documents with the `records` method. To provide additional loading options use `load` method:
+It is possible to load ORM/ODM source objects with the `objects` method. To provide additional loading options use `load` method:
 
 ```ruby
 PlacesIndex.load(scope: -> { active }).to_a # to_a returns `Chewy::Type` wrappers.
-PlacesIndex.load(scope: -> { active }).records # An array of AR source records.
+PlacesIndex.load(scope: -> { active }).objects # An array of AR source objects.
 ```
 
 See [Chewy::Search::Loader](lib/chewy/search/loader.rb) for more details.
 
-It is also possible to switch the scope to `records` mode with `as_records` method. In this mode the scope will act as a collection of ORM/ODM objects.
-
-```ruby
-PlacesIndex.as_records.load(scope: -> { active }).to_a # to_a returns an array of AR source records.
-PlacesIndex.as_records.load(scope: -> { active }).wrappers # returns `Chewy::Type` wrappers.
-```
-
-To switch it back to the wrappers mode use `as_wrappers`.
-
-In case when it is necessary to iterate through both of the wrappers and records simultaneously, `record_hash` method helps a lot:
+In case when it is necessary to iterate through both of the wrappers and objects simultaneously, `object_hash` method helps a lot:
 
 ```ruby
 scope = PlacesIndex.load(scope: -> { active })
 scope.each do |wrapper|
-  scope.record_hash[wrapper]
+  scope.object_hash[wrapper]
 end
 ```
 
@@ -891,32 +910,106 @@ end
 
 * Filters advanced block DSL is not supported anymore, `elasticsearch-dsl` is used instead.
 * Things like `query_mode` and `filter_mode` are in past, use advanced DSL to achieve similar behavior. See [Chewy::Search::QueryProxy](lib/chewy/search/query_proxy.rb) for details.
-* `preload` method is no more, the collection returned by scope doesn't depend on loading options. To switch the scope to the records mode and back, use `as_records`, `as_wrappers`
+* `preload` method is no more, the collection returned by scope doesn't depend on loading options, scope always returns `Chewy::Type` wrappers. To get ORM/ODM objects, use `#objects` method.
 * Some of the methods have changed their purpose: `only` was used to filter fields before, now it filters the scope. To filter fields use `source` or `stored_fields`.
 * `types!` method is no more, use `except(:types).types(...)`
 * Named aggregations are not supported, use named scopes instead.
 * A lot of query-level methods were not ported: everything that is related to boost and scoring. Use `query` manipulation to provide them.
-* `Chewy::Type#_object` returns nil always. Use `Chewy::Search::Response#record_hash` instead.
+* `Chewy::Type#_object` returns nil always. Use `Chewy::Search::Response#object_hash` instead.
 
 ### Rake tasks
 
-Inside the Rails application, some index-maintaining rake tasks are defined.
+For a Rails application, some index-maintaining rake tasks are defined.
+
+#### `chewy:reset`
+
+Performs zero-downtime reindexing as described [here](https://www.elastic.co/blog/changing-mapping-with-zero-downtime). So the rake task creates a new index with unique suffix and then simply aliases it to the common index name. The previous index is deleted afterwards (see `Chewy::Index.reset!` for more details).
 
 ```bash
-rake chewy:reset # resets all the existing indices, declared in app/chewy
+rake chewy:reset # resets all the existing indices
 rake chewy:reset[users] # resets UsersIndex only
-rake chewy:reset[users,projects] # resets UsersIndex and ProjectsIndex
-rake chewy:reset[-users,projects] # resets every index in application except specified ones
-
-rake chewy:update # updates all the existing indices, declared in app/chewy
-rake chewy:update[users] # updates UsersIndex only
-rake chewy:update[users,projects] # updates UsersIndex and ProjectsIndex
-rake chewy:update[-users,projects] # updates every index in application except specified ones
-
+rake chewy:reset[users,places] # resets UsersIndex and PlacesIndex
+rake chewy:reset[-users,places] # resets every index in the application except specified ones
 ```
 
-`rake chewy:reset` performs zero-downtime reindexing as described [here](https://www.elastic.co/blog/changing-mapping-with-zero-downtime). So basically rake task creates a new index with uniq suffix and then simply aliases it to the common index name. The previous index is deleted afterwards (see `Chewy::Index.reset!` for more details).
+#### `chewy:upgrade`
 
+Performs reset exactly the same way as `chewy:reset` does, but only when the index specification (setting or mapping) was changed.
+
+It works only when index specification is locked in `Chewy::Stash` index. The first run will reset all indexes and lock their specifications.
+
+See [Chewy::Stash](lib/chewy/stash.rb) and [Chewy::Index::Specification](lib/chewy/index/specification.rb) for more details.
+
+
+```bash
+rake chewy:upgrade # upgrades all the existing indices
+rake chewy:upgrade[users] # upgrades UsersIndex only
+rake chewy:upgrade[users,places] # upgrades UsersIndex and PlacesIndex
+rake chewy:upgrade[-users,places] # upgrades every index in the application except specified ones
+```
+
+#### `chewy:update`
+
+It doesn't create indexes, it simply imports everything to the existing ones and fails if the index was not created before.
+
+Unlike `reset` or `upgrade` tasks, it is possible to pass type references to update the particular type. In index name is passed without the type specified, it will update all the types defined for this index.
+
+```bash
+rake chewy:update # updates all the existing indices
+rake chewy:update[users] # updates UsersIndex only
+rake chewy:update[users,places#city] # updates the whole UsersIndex and PlacesIndex::City type
+rake chewy:update[-users,places#city] # updates every index in the application except every type defined in UsersIndex and the rest of the types defined in PlacesIndex
+```
+
+#### `chewy:sync`
+
+Provides a way to synchronize outdated indexes with the source quickly and without doing a full reset.
+
+Arguments are similar to the ones taken by `chewy:update` task. It is possible to specify a particular type or a whole index.
+
+See [Chewy::Type::Syncer](lib/chewy/type/syncer.rb) for more details.
+
+```bash
+rake chewy:sync # synchronizes all the existing indices
+rake chewy:sync[users] # synchronizes UsersIndex only
+rake chewy:sync[users,places#city] # synchronizes the whole UsersIndex and PlacesIndex::City type
+rake chewy:sync[-users,places#city] # synchronizes every index in the application except every type defined in UsersIndex and the rest of the types defined in PlacesIndex
+```
+
+#### `chewy:deploy`
+
+This rake task is especially useful during the production deploy. It is a combination of `chewy:upgrade` and `chewy:sync` and the latter is called only for the indexes that were not reset during the first stage.
+
+It is not possible to specify any particular types/indexes for this task as it doesn't make much sense.
+
+Right now the approach is that if some data had been updated, but index definition was not changed (no changes satisfying the synchronization algorithm were done), it would be much faster to perform manual partial index update inside data migrations or even manually after the deploy.
+
+Also, there is always full reset alternative with `rake chewy:reset`.
+
+#### Parallelizing rake tasks
+
+Every task described above has its own parallel version. Every parallel rake task takes the number for processes for execution as the first argument and the rest of the arguments are exactly the same as for the non-parallel task version.
+
+[https://github.com/grosser/parallel](https://github.com/grosser/parallel) gem is required to use these tasks.
+
+If the number of processes is not specified explicitly - `parallel` gem tries to automatically derive the number of processes to use.
+
+```bash
+rake chewy:parallel:reset
+rake chewy:parallel:upgrade[4]
+rake chewy:parallel:update[4,places#city]
+rake chewy:parallel:sync[4,-users]
+rake chewy:parallel:deploy[4] # performs parallel upgrade and parallel sync afterwards
+```
+
+#### `chewy:journal`
+
+This namespace contains two tasks for the journal manipulations: `chewy:journal:apply` and `chewy:journal:clean`. Both are taking time as the first argument (optional for clean) and a list of indexes/types exactly as the tasks above. Time can be in any format parsable by ActiveSupport.
+
+```bash
+rake chewy:journal:apply["$(date -v-1H -u +%FT%TZ)"] # apply journaled changes for the past hour
+rake chewy:journal:apply["$(date -v-1H -u +%FT%TZ)",users] # apply journaled changes for the past hour on UsersIndex only
+```
 
 ### Rspec integration
 
@@ -925,6 +1018,10 @@ Just add `require 'chewy/rspec'` to your spec_helper.rb and you will get additio
 ### Minitest integration
 
 Add `require 'chewy/minitest'` to your test_helper.rb, and then for tests which you'd like indexing test hooks, `include Chewy::Minitest::Helpers`.
+
+Since you can set `:bypass` strategy for test suites and manually handle import for the index and manually flush test indices using `Chewy.massacre`. This will help reduce unnecessary ES requests
+
+But if you require chewy to index/update model regularly in your test suite then you can specify `:urgent` strategy for documents indexing. Add `Chewy.strategy(:urgent)` to test_helper.rb.
 
 ### DatabaseCleaner
 

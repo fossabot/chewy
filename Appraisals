@@ -1,5 +1,3 @@
-# rubocop:disable Style/FileName
-
 %w[4.0 4.1 4.2].each do |activesupport|
   appraise "rails.#{activesupport}.activerecord" do
     gem 'activerecord', "~> #{activesupport}.0"
@@ -7,10 +5,14 @@
 
     gem 'activejob', "~> #{activesupport}.0" if activesupport >= '4.2'
     gem 'resque', require: false
+    gem 'shoryuken', require: false
+    gem 'aws-sdk-sqs', require: false
     gem 'sidekiq', require: false
 
     gem 'kaminari', '~> 0.17.0', require: false
     gem 'will_paginate', require: false
+
+    gem 'parallel', require: false
   end
 end
 
@@ -21,10 +23,14 @@ end
 
     gem 'activejob', "~> #{activesupport}.0"
     gem 'resque', require: false
+    gem 'shoryuken', require: false
+    gem 'aws-sdk-sqs', require: false
     gem 'sidekiq', require: false
 
     gem 'kaminari-core', '~> 1.0.0', require: false
     gem 'will_paginate', require: false
+
+    gem 'parallel', require: false
   end
 end
 
@@ -34,10 +40,14 @@ appraise 'rails.4.2.mongoid.5.1' do
 
   gem 'activejob', '~> 4.2.0'
   gem 'resque', require: false
+  gem 'shoryuken', require: false
+  gem 'aws-sdk-sqs', require: false
   gem 'sidekiq', require: false
 
   gem 'kaminari', '~> 0.17.0', require: false
   gem 'will_paginate', require: false
+
+  gem 'parallel', require: false
 end
 
 {'5.0' => '6.0', '5.1' => '6.1'}.each do |activesupport, mongoid|
@@ -47,10 +57,14 @@ end
 
     gem 'activejob', "~> #{activesupport}.0"
     gem 'resque', require: false
+    gem 'shoryuken', require: false
+    gem 'aws-sdk-sqs', require: false
     gem 'sidekiq', require: false
 
     gem 'kaminari-core', '~> 1.0.0', require: false
     gem 'will_paginate', require: false
+
+    gem 'parallel', require: false
   end
 end
 
@@ -61,5 +75,7 @@ end
 
     gem 'kaminari-core', '~> 1.0.0', require: false
     gem 'will_paginate', require: false
+
+    gem 'parallel', require: false
   end
 end

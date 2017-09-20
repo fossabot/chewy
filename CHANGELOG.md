@@ -1,10 +1,61 @@
 # master
 
+# Version 0.10.1
+
 ## Changes
+
+  * Improved parallel worker titles (#558)
+
+## Bugfixes
+
+  * Fixed request strategy initial debug message (#557)
+
+  * Fixed will objects paginated array initialization when pagination was not used (#556)
+
+  * Fixed fields symbol/string value (#555)
+
+  * Fixed root field value proc (#554)
+
+# Version 0.10.0
+
+## Breaking changes
+
+  * Changed behavior of `Chewy::Index.index_name`, it doesn't cache the values anymore.
+
+  * Journal interfaces, related code and rake tasks were completely refactored and are not compatible with the previous version.
+
+## Changes
+
+  * Less noisy strategies logging (@Borzik, #543)
+
+  * Parallel import and the corresponding rake tasks.
+
+  * `:shoryuken` async strategy (@josephchoe, #532)
+
+  * Deprecate `Chewy::Index.build_index_name`.
+
+  * Rename `Chewy::Index.default_prefix` to `Chewy::Index.prefix`. The old one is deprecated.
+
+  * Add `Chewy::Type.derivable_name` for consistency.
+
+  * Rename `Chewy::Index.derivable_index_name` to `Chewy::Index.derivable_name`.
+    `Chewy::Index.derivable_index_name` and `Chewy::Type.derivable_index_name` are deprecated.
+
+  * Use normal YAML loading, for the config, we don't need the safe one.
+
+  * `default_root_options` option (@barthez, #526)
+
+  * Partial indexing ability: it is possible to update only specified fields.
+
+  * New cool `rake chewy:deploy` task.
+
+  * Selective reset (resets only if necessary): `rake chewy:upgrade`.
+
+  * Consistency checks and synchronization: `rake chewy:sync`.
 
   * Brand new request DSL. Supports ElasticSearch 2 and 5, better usability, architecture and docs.
 
-  * Kaminari 1.0 support.
+  * Add Kaminari 1.0 support.
 
   * `skip_index_creation_on_import` option (@sergey-kintsel, #483)
 
@@ -28,7 +79,7 @@
 
   * Minitest helpers (@robacarp, #396)
 
-  * `Chewy::Query#unlimited` to fetch all the records (@sergey-kintsel, #393)
+  * `Chewy::Query#unlimited` to fetch all the documents (@sergey-kintsel, #393)
 
   * `Chewy::Query#exists?` (@sergey-kintsel, #386)
 
@@ -98,6 +149,12 @@
 
 # Version 0.8.3
 
+## Breaking changes:
+
+  * `Chewy.atomic` and `Chewy.urgent_update=` methods was removed from the codebase, use `Chewy.strategy` block instead.
+
+  * `delete_from_index?` hook is removed from the codebase.
+
 ## Changes
 
   * Sequel support completely reworked to use common ORM implementations + better sequel specs covarage.
@@ -113,12 +170,6 @@
   * Safe unsubscribe on import (@marshall-lee)
 
   * Correct custom assets path silencer (@davekaro)
-
-## Incompatible changes:
-
-  * `Chewy.atomic` and `Chewy.urgent_update=` methods was removed from the codebase, use `Chewy.strategy` block instead.
-
-  * `delete_from_index?` hook is removed from the codebase.
 
 # Version 0.8.2
 
@@ -155,7 +206,7 @@
 
 # Version 0.8.0
 
-## Incompatible changes:
+## Breaking changes:
 
   * `:atomic` and `:urgent` strategies are using `import!` method raising exceptions
 
@@ -181,7 +232,7 @@
 
 # Version 0.7.0
 
-## Incompatible changes:
+## Breaking changes:
 
   * `Chewy.use_after_commit_callbacks = false` returns previous RDBMS behavior
   in tests
@@ -310,7 +361,7 @@
 
   * `min_score` query option support (@jshirley)
 
-  * `Chewy::Query#find` method for finding records by id
+  * `Chewy::Query#find` method for finding documents by id
 
 # Version 0.6.0
 
@@ -330,7 +381,7 @@
 
 # Version 0.5.2
 
-## Incompatible changes:
+## Breaking changes:
 
   * `Chewy::Type::Base` removed in favour of using `Chewy::Type` as a base class for all types
 
@@ -370,7 +421,7 @@
 
 # Version 0.5.0
 
-## Incompatible changes:
+## Breaking changes:
 
   * 404 exception (IndexMissingException) while query is swallowed and treated like an empty result set.
 

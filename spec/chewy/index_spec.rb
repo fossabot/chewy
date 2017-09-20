@@ -61,16 +61,28 @@ describe Chewy::Index do
     specify { expect(stub_const('DeveloperIndex', Class.new(Chewy::Index)).index_name).to eq('developer') }
     specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).index_name).to eq('developers') }
 
+    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).index_name(suffix: '')).to eq('developers') }
+    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).index_name(suffix: '2013')).to eq('developers_2013') }
+    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).index_name(prefix: '')).to eq('developers') }
+    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).index_name(prefix: 'test')).to eq('test_developers') }
+
     context do
       before { allow(Chewy).to receive_messages(configuration: {prefix: 'testing'}) }
       specify { expect(DummiesIndex.index_name).to eq('testing_dummies') }
       specify { expect(stub_index(:dummies) { index_name :users }.index_name).to eq('testing_users') }
+      specify { expect(stub_index(:dummies) { index_name :users }.index_name(prefix: '')).to eq('users') }
     end
   end
 
-  describe '.default_prefix' do
+  describe '.derivable_name' do
+    specify { expect(Class.new(Chewy::Index).derivable_name).to be_nil }
+    specify { expect(stub_index(:places).derivable_name).to eq('places') }
+    specify { expect(stub_index('namespace/places').derivable_name).to eq('namespace/places') }
+  end
+
+  describe '.prefix' do
     before { allow(Chewy).to receive_messages(configuration: {prefix: 'testing'}) }
-    specify { expect(Class.new(Chewy::Index).default_prefix).to eq('testing') }
+    specify { expect(Class.new(Chewy::Index).prefix).to eq('testing') }
   end
 
   describe '.define_type' do
@@ -179,24 +191,44 @@ describe Chewy::Index do
       stub_index(:places) do
         def self.by_rating; end
 
-        def self.by_name; end
+        def self.colors(*colors)
+          filter(terms: {colors: colors.flatten(1).map(&:to_s)})
+        end
 
         define_type :city do
           def self.by_id; end
+          field :colors
         end
       end
     end
 
     specify { expect(described_class.scopes).to eq([]) }
-    specify { expect(PlacesIndex.scopes).to match_array(%i[by_rating by_name]) }
-  end
+    specify { expect(PlacesIndex.scopes).to match_array(%i[by_rating colors]) }
 
-  describe '.build_index_name' do
-    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).build_index_name(suffix: '')).to eq('developers') }
-    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).build_index_name(suffix: '2013')).to eq('developers_2013') }
-    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).build_index_name(prefix: '')).to eq('developers') }
-    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).build_index_name(prefix: 'test')).to eq('test_developers') }
-    specify { expect(stub_const('DevelopersIndex', Class.new(Chewy::Index)).build_index_name(:users, prefix: 'test', suffix: '2013')).to eq('test_users_2013') }
+    context do
+      before do
+        Chewy.massacre
+        PlacesIndex::City.import!(
+          double(colors: ['red']),
+          double(colors: %w[red green]),
+          double(colors: %w[green yellow])
+        )
+      end
+
+      specify do
+        # This `blank?`` call is for the messed scopes bug reproduction. See #573
+        PlacesIndex::City.blank?
+        expect(PlacesIndex.colors(:green).map(&:colors))
+          .to contain_exactly(%w[red green], %w[green yellow])
+      end
+
+      specify do
+        # This `blank?` call is for the messed scopes bug reproduction. See #573
+        PlacesIndex::City.blank?
+        expect(PlacesIndex::City.colors(:green).map(&:colors))
+          .to contain_exactly(%w[red green], %w[green yellow])
+      end
+    end
   end
 
   describe '.settings_hash' do
@@ -228,17 +260,17 @@ describe Chewy::Index do
     end
   end
 
-  describe '.index_params' do
+  describe '.specification_hash' do
     before { allow(Chewy).to receive_messages(config: Chewy::Config.send(:new)) }
 
-    specify { expect(stub_index(:documents).index_params).to eq({}) }
-    specify { expect(stub_index(:documents) { settings number_of_shards: 1 }.index_params.keys).to eq([:settings]) }
+    specify { expect(stub_index(:documents).specification_hash).to eq({}) }
+    specify { expect(stub_index(:documents) { settings number_of_shards: 1 }.specification_hash.keys).to eq([:settings]) }
     specify do
       expect(stub_index(:documents) do
                define_type :document do
                  field :name, type: 'string'
                end
-             end.index_params.keys).to eq([:mappings])
+             end.specification_hash.keys).to eq([:mappings])
     end
     specify do
       expect(stub_index(:documents) do
@@ -246,44 +278,35 @@ describe Chewy::Index do
                define_type :document do
                  field :name, type: 'string'
                end
-             end.index_params.keys).to match_array(%i[mappings settings])
+             end.specification_hash.keys).to match_array(%i[mappings settings])
     end
   end
 
-  describe '.journal?' do
-    specify { expect(stub_index(:documents).journal?).to eq false }
+  describe '.specification' do
+    subject { stub_index(:documents) }
+    specify { expect(subject.specification).to be_a(Chewy::Index::Specification) }
+    specify { expect(subject.specification).to equal(subject.specification) }
+  end
+
+  describe '.default_prefix' do
+    before { allow(Chewy).to receive_messages(configuration: {prefix: 'testing'}) }
 
     context do
-      before { allow(Chewy).to receive_messages(configuration: {journal: true}) }
-      specify { expect(stub_index(:documents).journal?).to eq false }
+      before { expect(ActiveSupport::Deprecation).to receive(:warn).once }
+      specify { expect(DummiesIndex.default_prefix).to eq('testing') }
     end
 
     context do
-      let(:index) do
-        stub_index(:documents) do
-          define_type :document do
+      before do
+        DummiesIndex.class_eval do
+          def self.default_prefix
+            'borogoves'
           end
         end
       end
 
-      specify { expect(index.journal?).to eq false }
-
-      context do
-        before { allow(Chewy).to receive_messages(configuration: {journal: true}) }
-        specify { expect(index.journal?).to eq true }
-      end
-    end
-
-    context do
-      let(:index) do
-        stub_index(:documents) do
-          define_type :document do
-            default_import_options journal: true
-          end
-        end
-      end
-
-      specify { expect(index.journal?).to eq true }
+      before { expect(ActiveSupport::Deprecation).to receive(:warn).once }
+      specify { expect(DummiesIndex.index_name).to eq('borogoves_dummies') }
     end
   end
 end

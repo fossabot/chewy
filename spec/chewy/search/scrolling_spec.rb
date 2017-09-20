@@ -50,6 +50,42 @@ describe Chewy::Search::Scrolling, :orm do
       end
 
       context do
+        before { expect(Chewy.client).to receive(:scroll).once.and_call_original }
+        it 'respects limit' do
+          expect(request.limit(4).scroll_batches(batch_size: 3).map do |batch|
+            batch.map { |hit| hit['_source']['rating'] }
+          end).to eq([[0, 1, 2], [3]])
+        end
+      end
+
+      context do
+        before { expect(Chewy.client).not_to receive(:scroll) }
+        it 'respects limit and terminate_after' do
+          expect(request.terminate_after(2).limit(4).scroll_batches(batch_size: 3).map do |batch|
+            batch.map { |hit| hit['_source']['rating'] }
+          end).to eq([[0, 1]])
+        end
+      end
+
+      context do
+        before { expect(Chewy.client).not_to receive(:scroll) }
+        it 'respects limit' do
+          expect(request.limit(3).scroll_batches(batch_size: 3).map do |batch|
+            batch.map { |hit| hit['_source']['rating'] }
+          end).to eq([[0, 1, 2]])
+        end
+      end
+
+      context do
+        before { expect(Chewy.client).not_to receive(:scroll) }
+        it 'respects limit' do
+          expect(request.limit(2).scroll_batches(batch_size: 3).map do |batch|
+            batch.map { |hit| hit['_source']['rating'] }
+          end).to eq([[0, 1]])
+        end
+      end
+
+      context do
         before { expect(Chewy.client).not_to receive(:scroll) }
         specify do
           expect(request.scroll_batches(batch_size: 5).map do |batch|
@@ -64,6 +100,33 @@ describe Chewy::Search::Scrolling, :orm do
           expect(request.scroll_batches(batch_size: 10).map do |batch|
             batch.map { |hit| hit['_source']['rating'] }
           end).to eq([[0, 1, 2, 3, 4]])
+        end
+      end
+
+      context 'instrumentation' do
+        specify do
+          outer_payload = []
+          ActiveSupport::Notifications.subscribe('search_query.chewy') do |_name, _start, _finish, _id, payload|
+            outer_payload << payload
+          end
+          request.scroll_batches(batch_size: 3).to_a
+
+          expect(outer_payload).to match_array([
+            hash_including(
+              index: PlacesIndex,
+              indexes: [PlacesIndex],
+              request: {index: ['places'], type: %w[city country], body: {sort: ['rating']}, size: 3, scroll: '1m'},
+              type: [PlacesIndex::City, PlacesIndex::Country],
+              types: [PlacesIndex::City, PlacesIndex::Country]
+            ),
+            hash_including(
+              index: PlacesIndex,
+              indexes: [PlacesIndex],
+              request: {scroll: '1m', scroll_id: an_instance_of(String)},
+              type: [PlacesIndex::City, PlacesIndex::Country],
+              types: [PlacesIndex::City, PlacesIndex::Country]
+            )
+          ])
         end
       end
     end
@@ -90,15 +153,15 @@ describe Chewy::Search::Scrolling, :orm do
       end
     end
 
-    describe '#scroll_records' do
+    describe '#scroll_objects' do
       before { expect(Chewy.client).to receive(:scroll).twice.and_call_original }
 
       specify do
-        expect(request.scroll_records(batch_size: 2).map(&:rating))
+        expect(request.scroll_objects(batch_size: 2).map(&:rating))
           .to eq([0, 1, 2, 3, 4])
       end
       specify do
-        expect(request.scroll_records(batch_size: 2).map(&:class).uniq)
+        expect(request.scroll_objects(batch_size: 2).map(&:class).uniq)
           .to eq([City, Country])
       end
     end
