@@ -39,7 +39,7 @@ module Chewy
           yield(hits) if hits.present?
           break if fetched >= total
           scroll_id = result['_scroll_id']
-          result = perform_scroll(scroll: scroll, scroll_id: scroll_id)
+          result = perform_scroll(scroll: scroll, body: { scroll_id: scroll_id })
         end
       end
 
