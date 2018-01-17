@@ -2,6 +2,7 @@
 [![Build Status](https://travis-ci.org/toptal/chewy.svg)](https://travis-ci.org/toptal/chewy)
 [![Code Climate](https://codeclimate.com/github/toptal/chewy.svg)](https://codeclimate.com/github/toptal/chewy)
 [![Inline docs](http://inch-ci.org/github/toptal/chewy.svg?branch=master)](http://inch-ci.org/github/toptal/chewy)
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fzenedge%2Fchewy.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fzenedge%2Fchewy?ref=badge_shield)
 
 <p align="right">Sponsored by</p>
 <p align="right"><a href="https://www.toptal.com/"><img src="https://www.toptal.com/assets/public/blocks/logo/big.png" alt="Toptal" width="105" height="34"></a></p>
@@ -956,3 +957,7 @@ Use the following Rake tasks to control the Elasticsearch cluster while developi
 rake elasticsearch:start # start Elasticsearch cluster on 9250 port for tests
 rake elasticsearch:stop # stop Elasticsearch
 ```
+
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fzenedge%2Fchewy.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fzenedge%2Fchewy?ref=badge_large)
